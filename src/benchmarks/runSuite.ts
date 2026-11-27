@@ -298,6 +298,7 @@ function makeAgent(id: string, position: GridCoord): AgentSnapshot {
     targetPosition: null,
     alertDepth: 0,
     memory: null,
+    health: 100,
   };
 }
 

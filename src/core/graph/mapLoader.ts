@@ -1,4 +1,4 @@
-import type { CellType, GridCoord, MapCellData, MapDefinition } from '../contracts.ts';
+import type { CellType, GridCoord, MapCellData, MapDefinition, WorldAlignment } from '../contracts.ts';
 
 const CELL_TYPES: ReadonlySet<CellType> = new Set<CellType>([
   'street',
@@ -111,5 +111,36 @@ export function parseMapDefinition(raw: unknown): MapDefinition {
     spawnMara,
     extractionPoint,
     cells: grid as MapCellData[],
+    ...(raw.world !== undefined ? { world: parseWorldAlignment(raw.world) } : {}),
   };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function parseWorldAlignment(raw: unknown): WorldAlignment {
+  if (!isObject(raw) || !isObject(raw.origin) || !isFiniteNumber(raw.origin.x) || !isFiniteNumber(raw.origin.z)) {
+    throw new MapValidationError('world.origin must be { x: number, z: number }');
+  }
+  const world: WorldAlignment = { origin: { x: raw.origin.x, z: raw.origin.z } };
+  if (raw.asset !== undefined) {
+    const asset = raw.asset;
+    if (
+      !isObject(asset) ||
+      typeof asset.url !== 'string' ||
+      !Array.isArray(asset.offset) ||
+      asset.offset.length !== 3 ||
+      !asset.offset.every(isFiniteNumber) ||
+      (asset.scale !== undefined && !(isFiniteNumber(asset.scale) && asset.scale > 0))
+    ) {
+      throw new MapValidationError('world.asset must be { url: string, offset: [x, y, z], scale?: number }');
+    }
+    world.asset = {
+      url: asset.url,
+      offset: [asset.offset[0], asset.offset[1], asset.offset[2]] as [number, number, number],
+      ...(asset.scale !== undefined ? { scale: asset.scale as number } : {}),
+    };
+  }
+  return world;
 }

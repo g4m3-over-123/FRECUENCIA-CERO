@@ -7,12 +7,15 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "benchmark": "tsx src/benchmarks/runSuite.ts"
+    "benchmark": "tsx src/benchmarks/runSuite.ts",
+    "map:street": "tsx scripts/generate-street-map.ts public/assets/props/street.glb public/maps/map_street.json --scale 2",
+    "check:assets": "node scripts/check-assets.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
     "@types/node": "^26.6.11",
     "@types/three": "^0.170.0",
     "tsx": "^4.19.2",

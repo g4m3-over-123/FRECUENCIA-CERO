@@ -193,10 +193,10 @@ describe('Horde spread and recursive alerts (hordeSpread.ts)', () => {
     const graph = new WeightedGraph(map);
     const focus: GridCoord = { row: 2, col: 3 };
     const agents: AgentSnapshot[] = [
-      { id: 'z1', role: 'pursuer', state: 'pursue', position: { row: 2, col: 1 }, targetPosition: null, alertDepth: 0, memory: null },
-      { id: 'z2', role: 'pursuer', state: 'pursue', position: { row: 0, col: 3 }, targetPosition: null, alertDepth: 0, memory: null },
-      { id: 'z3', role: 'explorer', state: 'alert', position: { row: 4, col: 3 }, targetPosition: null, alertDepth: 1, memory: null },
-      { id: 'z4', role: 'explorer', state: 'alert', position: { row: 2, col: 6 }, targetPosition: null, alertDepth: 1, memory: null },
+      { id: 'z1', role: 'pursuer', state: 'pursue', position: { row: 2, col: 1 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
+      { id: 'z2', role: 'pursuer', state: 'pursue', position: { row: 0, col: 3 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
+      { id: 'z3', role: 'explorer', state: 'alert', position: { row: 4, col: 3 }, targetPosition: null, alertDepth: 1, memory: null, health: 100 },
+      { id: 'z4', role: 'explorer', state: 'alert', position: { row: 2, col: 6 }, targetPosition: null, alertDepth: 1, memory: null, health: 100 },
     ];
 
     const assigned = assignDistributedTargets(graph, focus, agents, 3);
@@ -213,10 +213,10 @@ describe('Horde spread and recursive alerts (hordeSpread.ts)', () => {
 
   it('propagates recursive alerts among infected only and stops when coordination is disabled', () => {
     const agents: AgentSnapshot[] = [
-      { id: 'exp-1', role: 'explorer', state: 'alert', position: { row: 0, col: 0 }, targetPosition: null, alertDepth: 0, memory: null },
-      { id: 'pur-1', role: 'pursuer', state: 'patrol', position: { row: 0, col: 3 }, targetPosition: null, alertDepth: 0, memory: null },
-      { id: 'pur-2', role: 'pursuer', state: 'patrol', position: { row: 0, col: 6 }, targetPosition: null, alertDepth: 0, memory: null },
-      { id: 'survivor-radio', role: 'radio_survivor', state: 'idle', position: { row: 0, col: 1 }, targetPosition: null, alertDepth: 0, memory: null },
+      { id: 'exp-1', role: 'explorer', state: 'alert', position: { row: 0, col: 0 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
+      { id: 'pur-1', role: 'pursuer', state: 'patrol', position: { row: 0, col: 3 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
+      { id: 'pur-2', role: 'pursuer', state: 'patrol', position: { row: 0, col: 6 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
+      { id: 'survivor-radio', role: 'radio_survivor', state: 'idle', position: { row: 0, col: 1 }, targetPosition: null, alertDepth: 0, memory: null, health: 100 },
     ];
 
     const coordinated = triggerHordeSpread('exp-1', agents, {
@@ -666,6 +666,7 @@ describe('5-Scene progression, algorithm switching, and end conditions', () => {
       targetPosition: null,
       alertDepth: 0,
       memory: null,
+      health: 100,
     };
     const next = brain.decideNextState(
       basicAgent,

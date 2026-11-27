@@ -11,6 +11,14 @@ const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
 const DEFAULT_STREET_ASSET_URL = '/assets/props/street.glb';
 
+export interface SceneManagerOptions {
+  /**
+   * Loads street.glb centered on the origin for a standalone preview (default true).
+   * The game passes false: WorldBuilder places the asset aligned with the map grid.
+   */
+  autoloadStreetPreview?: boolean;
+}
+
 /**
  * Manages the Three.js WebGLRenderer, nocturnal atmosphere, pure First-Person (FPV)
  * PointerLockControls camera, camera-mounted flashlight, and resize lifecycle.
@@ -40,7 +48,10 @@ export class SceneManager {
   private readonly onKeyUpBound: (event: KeyboardEvent) => void;
   private readonly onPointerLockChangeBound: () => void;
 
-  constructor(private readonly container: HTMLElement) {
+  constructor(
+    private readonly container: HTMLElement,
+    options: SceneManagerOptions = {}
+  ) {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(NIGHT_SKY_COLOR);
     this.scene.fog = new THREE.FogExp2(NIGHT_SKY_COLOR, FPV_FOG_DENSITY);
@@ -116,7 +127,9 @@ export class SceneManager {
     window.addEventListener('keyup', this.onKeyUpBound);
     document.addEventListener('pointerlockchange', this.onPointerLockChangeBound);
 
-    void this.loadStreetPreview(DEFAULT_STREET_ASSET_URL);
+    if (options.autoloadStreetPreview !== false) {
+      void this.loadStreetPreview(DEFAULT_STREET_ASSET_URL);
+    }
   }
 
   start(onUpdate?: (dt: number) => void): void {

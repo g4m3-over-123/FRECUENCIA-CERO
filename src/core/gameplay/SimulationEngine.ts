@@ -1,14 +1,17 @@
-import type {
-  AgentSnapshot,
-  AlertPropagationResult,
-  AlgorithmType,
-  GridCoord,
-  HeuristicType,
-  MapDefinition,
-  SceneId,
-  SoundEvent,
-  TelemetryLogEntry,
-  WorldSnapshot,
+import {
+  GUNSHOT_SOURCE_ID,
+  type AgentSnapshot,
+  type AlertPropagationResult,
+  type AlgorithmType,
+  type GameCommand,
+  type GridCoord,
+  type MaraPosture,
+  type HeuristicType,
+  type MapDefinition,
+  type SceneId,
+  type SoundEvent,
+  type TelemetryLogEntry,
+  type WorldSnapshot,
 } from '../contracts.ts';
 import { runAStar } from '../algorithms/astar.ts';
 import { runDijkstra } from '../algorithms/dijkstra.ts';
@@ -32,12 +35,15 @@ import {
   type ReceivedAlertSignal,
 } from '../agents/perception.ts';
 import {
+  applyExternalMaraMove,
   createInitialMaraSnapshot,
   selectBarricadePlacementCell,
   updateMaraState,
   type ExtendedMaraSnapshot,
+  type ExternalMaraMove,
   type MaraInputState,
 } from './maraController.ts';
+import { consumeRound, getWeaponDefinition, reloadWeapon } from './weapons.ts';
 import {
   buildSceneLayout,
   getScenePreset,
@@ -95,6 +101,14 @@ export interface ExtendedWorldSnapshot extends WorldSnapshot {
   activeDecoys: ActiveDecoy[];
   pickups: WorldPickup[];
   algorithmComparison: AlgorithmComparisonMetrics;
+}
+
+export interface FireResult {
+  fired: boolean;
+  /** Agent that took damage, if any. */
+  hitAgentId: string | null;
+  killed: boolean;
+  sound: SoundEvent | null;
 }
 
 export interface SimulationEngineOptions {
@@ -166,6 +180,9 @@ export class SimulationEngine {
   private agentRuntimes: AgentRuntimeState[] = [];
   private pendingAlerts = new Map<string, ReceivedAlertSignal>();
   private queuedInput: MaraInputState = { ...DEFAULT_MARA_INPUT };
+  /** True once the FPV PlayerController drives Mara through setMaraCell. */
+  private externalControl = false;
+  private pendingExternalMove: ExternalMaraMove | null = null;
   private pendingSounds: SoundEvent[] = [];
   private activeDecoys: ActiveDecoy[] = [];
   private barricades: GridCoord[] = [];
@@ -318,7 +335,8 @@ export class SimulationEngine {
     );
 
     if (!result.decoySound) return null;
-    this.mara = result.mara;
+    // Only the decoy count changes: throwing must not alter posture, stamina or noise.
+    this.mara.decoysRemaining = result.mara.decoysRemaining;
     this.registerDecoy(result.decoySound);
     this.pushLog(
       'gameplay',
@@ -333,7 +351,7 @@ export class SimulationEngine {
   placeBarricade(targetCoord?: GridCoord): boolean {
     if (this.status !== 'playing' || this.mara.barricadesRemaining <= 0) return false;
 
-    const occupied = this.agentRuntimes.map((a) => a.position);
+    const occupied = this.livingAgentPositions();
     const protectedCells = [this.refugePosition, this.extractionPosition];
     const cell = selectBarricadePlacementCell(
       this.mara.position,
@@ -378,6 +396,118 @@ export class SimulationEngine {
     };
     this.pendingSounds.push(full);
     return full;
+  }
+
+  /**
+   * FPV mode: the browser owns continuous movement and collision and reports the cell
+   * Mara stands on. Applied on the next step(); the engine still validates walkability
+   * and derives footstep noise from the posture.
+   */
+  setMaraCell(cell: GridCoord, posture: MaraPosture, facing?: GridCoord): void {
+    this.externalControl = true;
+    this.pendingExternalMove = {
+      cell: { ...cell },
+      posture,
+      ...(facing ? { facing: { ...facing } } : {}),
+    };
+  }
+
+  isExternallyControlled(): boolean {
+    return this.externalControl;
+  }
+
+  /**
+   * Fires Mara's weapon. Every shot is a loud SoundEvent that enters local perception and
+   * the recursive alert system, so shooting attracts the horde. `hitAgentId` comes from the
+   * render raycast; the engine decides damage.
+   */
+  fire(hitAgentId: string | null): FireResult {
+    const none: FireResult = { fired: false, hitAgentId: null, killed: false, sound: null };
+    if (this.status !== 'playing' || this.paused) return none;
+
+    const weapon = consumeRound(this.mara.weapon);
+    if (!weapon) {
+      this.pushLog('gameplay', 'Weapon click: magazine empty (press R to reload)');
+      return none;
+    }
+    this.mara.weapon = weapon;
+
+    const def = getWeaponDefinition(weapon.id);
+    const sound = this.emitSound({
+      sourceId: GUNSHOT_SOURCE_ID,
+      position: { ...this.mara.position },
+      radius: def.soundRadius,
+      intensity: def.soundIntensity,
+    });
+
+    let hit: string | null = null;
+    let killed = false;
+    if (hitAgentId && this.applyHit(hitAgentId, def.damage)) {
+      hit = hitAgentId;
+      killed = this.agentRuntimes.find((a) => a.id === hitAgentId)?.state === 'dead';
+    }
+    this.pushLog(
+      'gameplay',
+      `Mara fired ${weapon.id} [ammo=${weapon.ammoInMagazine}/${weapon.ammoReserve}]${hit ? ` and hit ${hit}${killed ? ' (killed)' : ''}` : ''}`
+    );
+    return { fired: true, hitAgentId: hit, killed, sound };
+  }
+
+  reload(): boolean {
+    const before = this.mara.weapon;
+    if (before.ammoInMagazine >= before.magazineSize || before.ammoReserve <= 0) return false;
+    this.mara.weapon = reloadWeapon(before);
+    this.pushLog(
+      'gameplay',
+      `Mara reloaded [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
+    );
+    return true;
+  }
+
+  /**
+   * Applies damage to an infected agent. Returns false for unknown, dead or non-infected agents.
+   * Survivors cannot be damaged. A hit stuns for one tick; health 0 means dead (permanent).
+   */
+  applyHit(agentId: string, damage: number): boolean {
+    const runtime = this.agentRuntimes.find((a) => a.id === agentId);
+    if (!runtime || runtime.role === 'radio_survivor' || runtime.state === 'dead') return false;
+
+    runtime.health = Math.max(0, runtime.health - Math.max(0, damage));
+    if (runtime.health <= 0) {
+      runtime.state = 'dead';
+      runtime.currentPath = [];
+      runtime.targetPosition = null;
+      runtime.goalReason = 'dead';
+      this.pushLog('agent', `${agentId} was killed`);
+    } else {
+      runtime.stunnedUntilTick = this.tickCount + 1;
+      runtime.state = 'stunned';
+    }
+    return true;
+  }
+
+  /** Single entry point used by the GameLoop for every browser command. */
+  applyCommand(command: GameCommand): void {
+    switch (command.type) {
+      case 'moveToCell':
+        this.setMaraCell(command.cell, command.posture, command.facing);
+        break;
+      case 'fire':
+        this.fire(command.hitAgentId);
+        break;
+      case 'reload':
+        this.reload();
+        break;
+      case 'decoy':
+        this.triggerDecoy(command.target);
+        break;
+      case 'barricade':
+        this.placeBarricade(command.target);
+        break;
+      case 'interact':
+        // Phase 0: pickups are collected by proximity. Front C can require explicit interaction.
+        break;
+    }
   }
 
   /**
@@ -437,11 +567,31 @@ export class SimulationEngine {
     const input = this.queuedInput;
     this.queuedInput = { ...DEFAULT_MARA_INPUT };
 
-    const maraResult = updateMaraState(this.mara, input, this.tickCount, {
-      graph: this.graph,
-      occupiedByAgents: this.agentRuntimes.map((a) => a.position),
-      protectedCells: [this.refugePosition, this.extractionPosition],
-    });
+    if (this.externalControl) {
+      const move: ExternalMaraMove = this.pendingExternalMove ?? {
+        cell: { ...this.mara.position },
+        posture: this.mara.posture,
+      };
+      this.pendingExternalMove = null;
+      input.moveDirection = { row: 0, col: 0 };
+      const external = applyExternalMaraMove(this.mara, move, this.tickCount, this.graph);
+      this.mara = external.mara;
+      if (external.emittedSound) tickSounds.push(external.emittedSound);
+    }
+
+    const maraResult = this.externalControl
+      ? {
+          mara: this.mara,
+          emittedSound: null,
+          decoySound: null,
+          placedBarricade: null,
+          barricadeSound: null,
+        }
+      : updateMaraState(this.mara, input, this.tickCount, {
+          graph: this.graph,
+          occupiedByAgents: this.livingAgentPositions(),
+          protectedCells: [this.refugePosition, this.extractionPosition],
+        });
     this.mara = maraResult.mara;
 
     if (maraResult.emittedSound) {
@@ -476,11 +626,12 @@ export class SimulationEngine {
 
     // 5. Execute each agent's local Perception -> Memory -> Decision -> Planning -> Execution -> Evaluation cycle
     const pendingBroadcasts: Array<{ originId: string; target: GridCoord }> = [];
-    const currentSnapshotsForAlerts: AgentSnapshot[] = this.agentRuntimes.map((r) =>
-      toAgentSnapshot(r)
-    );
+    const currentSnapshotsForAlerts: AgentSnapshot[] = this.agentRuntimes
+      .filter((r) => r.state !== 'dead')
+      .map((r) => toAgentSnapshot(r));
 
     for (const runtime of this.agentRuntimes) {
+      if (runtime.state === 'dead') continue;
       const profile = AGENT_PROFILES[runtime.role];
 
       // Strictly local LOS check performed by environment; AgentBrain never sees Mara directly.
@@ -594,6 +745,7 @@ export class SimulationEngine {
     this.defeatReason = 'none';
     this.pendingAlerts.clear();
     this.queuedInput = { ...DEFAULT_MARA_INPUT };
+    this.pendingExternalMove = null;
     this.pendingSounds = [];
     this.activeDecoys = [];
     this.barricades = [];
@@ -683,7 +835,10 @@ export class SimulationEngine {
     // Collect supplies when stepping onto pickup coordinates
     for (const pickup of this.pickups) {
       if (pickup.collected) continue;
-      if (sameCoord(this.mara.position, pickup.position)) {
+      const reach = this.externalControl ? 1 : 0;
+      const dRow = Math.abs(this.mara.position.row - pickup.position.row);
+      const dCol = Math.abs(this.mara.position.col - pickup.position.col);
+      if (Math.max(dRow, dCol) <= reach) {
         pickup.collected = true;
         if (pickup.kind === 'medicine') {
           this.mara.hasMedicalKit = true;
@@ -788,7 +943,7 @@ export class SimulationEngine {
   private computeHordeFlankingAssignments(tickSounds: readonly SoundEvent[]): Map<string, GridCoord> {
     const assignments = new Map<string, GridCoord>();
     const infected = this.agentRuntimes.filter(
-      (r) => r.role !== 'radio_survivor' && r.state !== 'stunned'
+      (r) => r.role !== 'radio_survivor' && r.state !== 'stunned' && r.state !== 'dead'
     );
     if (infected.length <= 1) return assignments;
 
@@ -839,7 +994,7 @@ export class SimulationEngine {
     let best: GridCoord | null = null;
     let bestDist = Infinity;
     for (const runtime of this.agentRuntimes) {
-      if (runtime.role === 'radio_survivor' || runtime.state === 'stunned') continue;
+      if (runtime.role === 'radio_survivor' || runtime.state === 'stunned' || runtime.state === 'dead') continue;
       const d = gridDistance(this.refugePosition, runtime.position);
       if (d <= radius && d < bestDist) {
         bestDist = d;
@@ -865,10 +1020,11 @@ export class SimulationEngine {
     }
 
     for (const runtime of this.agentRuntimes) {
-      if (runtime.role === 'radio_survivor' || runtime.state === 'stunned') continue;
+      if (runtime.role === 'radio_survivor' || runtime.state === 'stunned' || runtime.state === 'dead') continue;
       const profile = AGENT_PROFILES[runtime.role];
 
       if (sameCoord(runtime.position, this.mara.position)) {
+        runtime.state = 'attack';
         this.mara.health = Math.max(0, this.mara.health - profile.meleeDamage);
         runtime.stunnedUntilTick = this.tickCount + 1;
         this.pushLog(
@@ -914,6 +1070,10 @@ export class SimulationEngine {
       this.defeatReason = 'extraction_missed';
       this.pushLog('gameplay', 'Defeat: Temporary extraction window expired');
     }
+  }
+
+  private livingAgentPositions(): GridCoord[] {
+    return this.agentRuntimes.filter((a) => a.state !== 'dead').map((a) => a.position);
   }
 
   private recordSearchMetric(algorithm: AlgorithmType, stats: SearchStats): void {

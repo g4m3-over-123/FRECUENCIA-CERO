@@ -1,7 +1,8 @@
-import type { GridCoord, MaraSnapshot, SoundEvent } from '../contracts.ts';
+import type { GridCoord, MaraPosture, MaraSnapshot, SoundEvent } from '../contracts.ts';
 import type { WeightedGraph } from '../graph/WeightedGraph.ts';
+import { createWeaponSnapshot } from './weapons.ts';
 
-export type MaraPosture = 'stealth' | 'walk' | 'sprint';
+export type { MaraPosture };
 
 /**
  * Extended Mara snapshot structurally assignable to MaraSnapshot.
@@ -64,6 +65,7 @@ export function createInitialMaraSnapshot(
     barricadesRemaining: 3,
     posture: 'stealth',
     facing: { row: 0, col: 1 },
+    weapon: createWeaponSnapshot(),
     ...overrides,
   };
 }
@@ -83,6 +85,7 @@ function toExtendedMara(mara: MaraSnapshot): ExtendedMaraSnapshot {
     barricadesRemaining: maybe.barricadesRemaining ?? 3,
     posture: maybe.posture ?? 'stealth',
     facing: maybe.facing ? { ...maybe.facing } : { row: 0, col: 1 },
+    weapon: mara.weapon ? { ...mara.weapon } : createWeaponSnapshot(),
   };
 }
 
@@ -249,38 +252,7 @@ export function updateMaraState(
     }
   }
 
-  let emittedSound: SoundEvent | null = null;
-  if (moved) {
-    if (posture === 'stealth') {
-      next.noiseLevel = 0;
-      next.stamina = Math.min(100, next.stamina + STEALTH_STAMINA_RECOVERY);
-    } else if (posture === 'sprint') {
-      next.noiseLevel = 0.85;
-      next.stamina = Math.max(0, next.stamina - SPRINT_STAMINA_COST);
-      emittedSound = {
-        id: `sound-sprint-${tick}`,
-        sourceId: 'mara_sprint',
-        position: { ...next.position },
-        radius: 7,
-        intensity: 0.85,
-        timestamp: tick,
-      };
-    } else {
-      next.noiseLevel = 0.25;
-      next.stamina = Math.min(100, next.stamina + WALK_STAMINA_RECOVERY);
-      emittedSound = {
-        id: `sound-step-${tick}`,
-        sourceId: 'mara_step',
-        position: { ...next.position },
-        radius: 2.5,
-        intensity: 0.32,
-        timestamp: tick,
-      };
-    }
-  } else {
-    next.noiseLevel = 0;
-    next.stamina = Math.min(100, next.stamina + IDLE_STAMINA_RECOVERY);
-  }
+  const emittedSound = applyMovementNoise(next, posture, moved, tick);
 
   let decoySound: SoundEvent | null = null;
   if (input.emitDecoy && next.decoysRemaining > 0) {
@@ -335,4 +307,89 @@ export function updateMaraState(
     barricadeSound,
     moved,
   };
+}
+
+/**
+ * Updates noise and stamina after a movement attempt and returns the footstep sound, if any.
+ * Shared by discrete input (updateMaraState) and FPV-driven movement (applyExternalMaraMove).
+ */
+function applyMovementNoise(
+  next: ExtendedMaraSnapshot,
+  posture: MaraPosture,
+  moved: boolean,
+  tick: number
+): SoundEvent | null {
+  if (!moved) {
+    next.noiseLevel = 0;
+    next.stamina = Math.min(100, next.stamina + IDLE_STAMINA_RECOVERY);
+    return null;
+  }
+  if (posture === 'stealth') {
+    next.noiseLevel = 0;
+    next.stamina = Math.min(100, next.stamina + STEALTH_STAMINA_RECOVERY);
+    return null;
+  }
+  if (posture === 'sprint') {
+    next.noiseLevel = 0.85;
+    next.stamina = Math.max(0, next.stamina - SPRINT_STAMINA_COST);
+    return {
+      id: `sound-sprint-${tick}`,
+      sourceId: 'mara_sprint',
+      position: { ...next.position },
+      radius: 7,
+      intensity: 0.85,
+      timestamp: tick,
+    };
+  }
+  next.noiseLevel = 0.25;
+  next.stamina = Math.min(100, next.stamina + WALK_STAMINA_RECOVERY);
+  return {
+    id: `sound-step-${tick}`,
+    sourceId: 'mara_step',
+    position: { ...next.position },
+    radius: 2.5,
+    intensity: 0.32,
+    timestamp: tick,
+  };
+}
+
+export interface ExternalMaraMove {
+  cell: GridCoord;
+  posture: MaraPosture;
+  facing?: GridCoord;
+}
+
+/**
+ * Applies a position reported by the FPV PlayerController (the browser owns continuous
+ * movement and collision). The engine still validates the cell and derives noise and
+ * stamina from the posture, so stealth rules keep working.
+ * Sprint falls back to walk when stamina is exhausted.
+ */
+export function applyExternalMaraMove(
+  mara: MaraSnapshot,
+  move: ExternalMaraMove,
+  tick: number,
+  graph?: WeightedGraph
+): { mara: ExtendedMaraSnapshot; emittedSound: SoundEvent | null; moved: boolean } {
+  const next = toExtendedMara(mara);
+  const target = move.cell;
+  const valid = graph ? graph.isWalkable(target) : target.row >= 0 && target.col >= 0;
+  const moved = valid && !isSameCoord(target, next.position);
+
+  if (moved) {
+    const dr = clampStep(target.row - next.position.row);
+    const dc = clampStep(target.col - next.position.col);
+    next.facing = { row: dr, col: dc };
+    next.position = { ...target };
+  }
+  if (move.facing && (move.facing.row !== 0 || move.facing.col !== 0)) {
+    next.facing = { row: clampStep(move.facing.row), col: clampStep(move.facing.col) };
+  }
+
+  let posture = move.posture;
+  if (posture === 'sprint' && next.stamina < SPRINT_STAMINA_COST) posture = 'walk';
+  next.posture = posture;
+
+  const emittedSound = applyMovementNoise(next, posture, moved, tick);
+  return { mara: next, emittedSound, moved };
 }

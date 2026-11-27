@@ -145,3 +145,27 @@ body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-
   .monitor-panel { width: 100%; max-height: 54dvh; }
   .monitor-map { width: min(100%, 132px); }
 }
+
+/* Phase 0 FPS HUD (GameHud.ts) */
+.game-hud { position: absolute; inset: 0; z-index: 5; pointer-events: none; color: var(--text); font-family: var(--mono); }
+.hud-crosshair { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; translate: -50% -50%;
+  background: linear-gradient(#fffc, #fffc) center / 2px 100% no-repeat, linear-gradient(#fffc, #fffc) center / 100% 2px no-repeat;
+  mix-blend-mode: difference; }
+.hud-hitmarker { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; translate: -50% -50%; rotate: 45deg; opacity: 0;
+  background: linear-gradient(#f87171, #f87171) center / 2px 100% no-repeat, linear-gradient(#f87171, #f87171) center / 100% 2px no-repeat; }
+.hud-hitmarker.visible { opacity: 1; }
+.hud-top { position: absolute; top: 16px; left: 16px; max-width: min(520px, 50vw); text-shadow: 0 1px 3px #000; }
+.hud-top p { margin: 0; }
+.hud-scene { color: var(--accent); font-weight: 700; font-size: .85rem; letter-spacing: .06em; }
+.hud-objective { font-size: .8rem; color: var(--muted); }
+.hud-bottom-left { position: absolute; left: 16px; bottom: 16px; display: grid; gap: 6px; }
+.hud-bar { display: grid; grid-template-columns: 70px 160px 70px; align-items: center; gap: 8px; font-size: .75rem; text-shadow: 0 1px 3px #000; }
+.hud-bar meter { width: 160px; height: 10px; }
+.hud-bottom-right { position: absolute; left: 50%; bottom: 16px; translate: -50% 0; text-align: center; text-shadow: 0 1px 3px #000; }
+.hud-bottom-right p { margin: 0; }
+.hud-ammo b { font-size: 2rem; }
+.hud-ammo span, .hud-meta { color: var(--muted); font-size: .8rem; }
+.hud-lock { position: absolute; left: 50%; top: 62%; translate: -50% 0; padding: 12px 18px; border: 1px solid var(--line);
+  border-radius: 10px; background: #0b1017cc; text-align: center; font-size: .75rem; color: var(--muted); }
+.hud-lock p { margin: 2px 0; }
+.hud-lock b { color: var(--text); font-size: .95rem; }

@@ -74,10 +74,18 @@ export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
   },
 };
 
+/** Phase 0 hit points per role. Front C owns balance. */
+export const AGENT_MAX_HEALTH: Record<AgentRole, number> = {
+  explorer: 70,
+  pursuer: 105,
+  radio_survivor: 100,
+};
+
 export interface AgentRuntimeState {
   id: string;
   role: AgentRole;
   state: AgentState;
+  health: number;
   position: GridCoord;
   homePosition: GridCoord;
   targetPosition: GridCoord | null;
@@ -172,6 +180,7 @@ export function createAgentRuntime(
     id,
     role,
     state: initialState,
+    health: AGENT_MAX_HEALTH[role],
     position: { ...startPosition },
     homePosition: { ...startPosition },
     targetPosition: null,
@@ -204,6 +213,7 @@ export function toAgentSnapshot(runtime: AgentRuntimeState): ExtendedAgentSnapsh
     targetPosition: runtime.targetPosition ? { ...runtime.targetPosition } : null,
     alertDepth: runtime.alertDepth,
     memory: runtime.memoryStore.getSnapshot(),
+    health: runtime.health,
     currentPath: runtime.currentPath.map((p) => ({ ...p })),
     lastSearch: runtime.lastSearch
       ? {
@@ -236,7 +246,7 @@ export class AgentBrain {
     perceivedSounds: SoundEvent[],
     hasLineOfSightFlag: boolean
   ): AgentSnapshot {
-    if (agent.state === 'stunned') return { ...agent };
+    if (agent.state === 'stunned' || agent.state === 'dead') return { ...agent };
 
     if (agent.role === 'radio_survivor') {
       const nextState: AgentState = perceivedSounds.length > 0 || hasLineOfSightFlag ? 'alert' : 'idle';
@@ -311,6 +321,23 @@ export class AgentBrain {
     let planChangeReason: string | null = null;
     let searchExecuted: SearchStats | null = null;
     let moved = false;
+
+    // Dead agents never perceive, plan or move again.
+    if (runtime.state === 'dead' || runtime.health <= 0) {
+      runtime.state = 'dead';
+      runtime.currentPath = [];
+      runtime.targetPosition = null;
+      runtime.goalReason = 'dead';
+      return {
+        snapshot: toAgentSnapshot(runtime),
+        shouldBroadcastAlert: false,
+        alertTarget: null,
+        planChanged: false,
+        planChangeReason: null,
+        searchExecuted: null,
+        moved: false,
+      };
+    }
 
     // 1. Perception stage
     runtime.perceptionSummary = perception.summary;

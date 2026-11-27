@@ -4,6 +4,7 @@ import type {
 import { AudioManager } from '../render/AudioManager.ts';
 
 const maps = {
+  map_street: 'Calle FPV (street.glb) · 46 × 56',
   map_small: 'Barrio sur · 20 × 20',
   map_medium: 'Centro urbano · 32 × 32',
   map_large: 'Distrito industrial · 50 × 50',
@@ -66,7 +67,7 @@ const scenes = {
 const roles = { explorer: 'Explorador', pursuer: 'Perseguidor', radio_survivor: 'Superviviente' };
 const states = {
   idle: 'En espera', patrol: 'Patrulla', investigate: 'Investiga', pursue: 'Persigue',
-  alert: 'En alerta', stunned: 'Aturdido',
+  alert: 'En alerta', stunned: 'Aturdido', attack: 'Ataca', dead: 'Muerto',
 };
 const evidence = { vision: 'Visión', sound: 'Sonido', alert: 'Alerta' };
 const logCategories = { search: 'Búsqueda', alert: 'Alerta', agent: 'Agente', gameplay: 'Partida', system: 'Sistema' };
@@ -136,7 +137,7 @@ export class MonitorPanel {
           <div class="monitor-section-title"><h2 id="monitor-map-title">Mapa táctico</h2><span class="monitor-meta" data-field="map-size">—</span></div>
           <label class="monitor-sr-only" for="monitor-map">Sector del mapa</label>
           <select id="monitor-map">
-            ${Object.entries(maps).map(([id, label]) => `<option value="${id}"${id === 'map_medium' ? ' selected' : ''}>${label}</option>`).join('')}
+            ${Object.entries(maps).map(([id, label]) => `<option value="${id}"${id === 'map_street' ? ' selected' : ''}>${label}</option>`).join('')}
           </select>
           <div class="monitor-map-frame"><canvas class="monitor-map" width="250" height="250" role="img" aria-label="Mapa cenital del sector"></canvas></div>
           <p class="monitor-meta" data-field="map-status" role="status">Cargando mapa…</p>
@@ -225,7 +226,18 @@ export class MonitorPanel {
     container.appendChild(this.root);
     this.bindControls();
     this.showDialog('start');
-    void this.selectMap('map_medium', false);
+    void this.selectMap('map_street', false);
+  }
+
+  /** Shows a map in the tactical view without notifying onMapChange (used at startup). */
+  showMap(id: MonitorMapId): void {
+    this.mapSelect.value = id;
+    void this.selectMap(id, false);
+  }
+
+  /** Closes the start/end dialog programmatically (e.g. ?autostart=1). */
+  closeDialog(): void {
+    if (this.dialog.open) this.dialog.close();
   }
 
   update(snapshot: WorldSnapshot, telemetry: MonitorTelemetry = {}): void {

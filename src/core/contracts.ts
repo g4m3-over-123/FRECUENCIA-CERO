@@ -22,6 +22,21 @@ export interface MapCellData {
   elevation?: number;
 }
 
+/**
+ * Links the logical grid with the 3D world (meters).
+ * Convention: col grows along +X, row grows along +Z, Y is up.
+ * origin = world XZ position of the outer corner of cell (0, 0).
+ */
+export interface WorldAlignment {
+  origin: { x: number; z: number };
+  /** Optional GLB that visually represents this grid, placed with `offset` (and `scale`). */
+  asset?: {
+    url: string;
+    offset: [number, number, number];
+    scale?: number;
+  };
+}
+
 export interface MapDefinition {
   id: string;
   name: string;
@@ -31,6 +46,8 @@ export interface MapDefinition {
   spawnMara: GridCoord;
   extractionPoint: GridCoord;
   cells: MapCellData[];
+  /** Absent = grid centered on the world origin, no visual asset. */
+  world?: WorldAlignment;
 }
 
 export type AlgorithmType = 'dijkstra' | 'astar';
@@ -80,7 +97,9 @@ export type AgentState =
   | 'investigate'
   | 'pursue'
   | 'alert'
-  | 'stunned';
+  | 'stunned'
+  | 'attack'
+  | 'dead';
 
 export interface AgentMemoryEntry {
   position: GridCoord;
@@ -97,6 +116,18 @@ export interface AgentSnapshot {
   targetPosition: GridCoord | null;
   alertDepth: number;
   memory: AgentMemoryEntry | null;
+  /** 0 means dead. */
+  health: number;
+}
+
+export type MaraPosture = 'stealth' | 'walk' | 'sprint';
+
+export interface WeaponSnapshot {
+  id: string;
+  ammoInMagazine: number;
+  magazineSize: number;
+  ammoReserve: number;
+  reloading: boolean;
 }
 
 export interface MaraSnapshot {
@@ -106,6 +137,7 @@ export interface MaraSnapshot {
   stamina: number;
   hasMedicalKit: boolean;
   reachedExtraction: boolean;
+  weapon: WeaponSnapshot;
 }
 
 export interface TelemetryLogEntry {
@@ -116,6 +148,21 @@ export interface TelemetryLogEntry {
 }
 
 export type SceneId = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * The only way the browser (input, camera, weapon raycast) talks to the simulation.
+ * The engine validates every command against its own rules.
+ */
+export type GameCommand =
+  | { type: 'moveToCell'; cell: GridCoord; posture: MaraPosture; facing?: GridCoord }
+  | { type: 'fire'; hitAgentId: string | null }
+  | { type: 'reload' }
+  | { type: 'decoy'; target?: GridCoord }
+  | { type: 'barricade'; target?: GridCoord }
+  | { type: 'interact' };
+
+/** SoundEvent.sourceId emitted by gunshots. */
+export const GUNSHOT_SOURCE_ID = 'mara_gunshot';
 
 export interface WorldSnapshot {
   sceneId: SceneId;

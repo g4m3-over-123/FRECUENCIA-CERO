@@ -67,7 +67,7 @@ function pathCost(graph: WeightedGraph, path: GridCoord[]): number {
 }
 
 function agent(id: string, row: number, col: number): AgentSnapshot {
-  return { id, role: 'explorer', state: 'patrol', position: { row, col }, targetPosition: null, alertDepth: 0, memory: null };
+  return { id, role: 'explorer', state: 'patrol', position: { row, col }, targetPosition: null, alertDepth: 0, memory: null, health: 100 };
 }
 
 describe('SeededRng', () => {
