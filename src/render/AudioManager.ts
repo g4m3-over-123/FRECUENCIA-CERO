@@ -4,14 +4,17 @@ import type { AgentState, GridCoord, MapDefinition, SoundEvent, WorldSnapshot } 
 import { gridToWorld } from '../core/world/gridSpace.ts';
 
 const gains = {
-  step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.28,
+  step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.34,
   barricade: 0.45, radio: 0.48, ambient: 0.22,
-  gunshot: 0.52, reload: 0.34, dry_fire: 0.21, impact: 0.42, growl: 0.38,
+  gunshot: 0.52, reload: 0.34, dry_fire: 0.21, impact: 0.42,
+  growl: 0.38, zombie_growl_2: 0.38, zombie_attack: 0.46,
+  zombie_hurt: 0.40, zombie_death: 0.44, zombie_idle: 0.24,
 } as const;
 
 export type AudioCue = keyof typeof gains;
 type SoundCue = Exclude<AudioCue, 'ambient'>;
 type WeaponCue = 'gunshot' | 'reload' | 'dry_fire';
+type GrowlCue = 'growl' | 'zombie_growl_2';
 
 const sourceCues: Readonly<Record<string, SoundCue>> = {
   mara: 'step', step: 'step', mara_step: 'step', mara_sprint: 'step',
@@ -20,7 +23,10 @@ const sourceCues: Readonly<Record<string, SoundCue>> = {
   barricade_place: 'barricade', radio: 'radio',
 };
 
-const combatCues: readonly SoundCue[] = ['gunshot', 'reload', 'dry_fire', 'impact', 'growl'];
+const combatCues: readonly SoundCue[] = [
+  'gunshot', 'reload', 'dry_fire', 'impact',
+  'growl', 'zombie_alert', 'zombie_growl_2', 'zombie_attack', 'zombie_hurt', 'zombie_death', 'zombie_idle',
+];
 const MAX_VOICES = 12;
 const MAX_DISTANCE = 36;
 
@@ -34,12 +40,26 @@ interface Voice {
   source: AudioBufferSourceNode;
   panner: PannerNode;
   gain: GainNode;
+  agentId?: string;
+}
+
+interface Clip {
+  element: HTMLAudioElement;
+  agentId?: string;
 }
 
 interface HeardAgent {
   state: AgentState;
   health: number;
   growledAt: number;
+  idledAt: number;
+  nextGrowl: GrowlCue;
+}
+
+function agentSeed(id: string): number {
+  let sum = 0;
+  for (let i = 0; i < id.length; i++) sum += id.charCodeAt(i);
+  return sum;
 }
 
 function defaultCue(sound: SoundEvent): SoundCue | undefined {
@@ -57,6 +77,7 @@ export class AudioManager {
   static bindScene(scene: THREE.Scene, map: MapDefinition): () => void {
     const camera = scene.children.find((child): child is THREE.Camera => child instanceof THREE.Camera);
     if (!camera) return () => undefined;
+    AudioManager.scene?.player?.releaseSpatialAudio();
     const binding: SpatialScene = { camera, map, player: null };
     AudioManager.scene = binding;
     return () => {
@@ -73,7 +94,7 @@ export class AudioManager {
   }
 
   private readonly binding = AudioManager.scene;
-  private readonly clips = new Map<AudioCue, HTMLAudioElement>();
+  private readonly clips = new Map<AudioCue, Clip>();
   private readonly buffers = new Map<SoundCue, Promise<AudioBuffer | null>>();
   private readonly voices = new Set<Voice>();
   private readonly playedSounds = new Map<string, number>();
@@ -88,14 +109,17 @@ export class AudioManager {
   private muted = false;
 
   constructor(private readonly cueForSound: (sound: SoundEvent) => SoundCue | undefined = defaultCue) {
-    if (this.binding) this.binding.player = this;
+    if (this.binding) {
+      this.binding.player?.releaseSpatialAudio();
+      this.binding.player = this;
+    }
   }
 
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (muted) {
       this.stopVoices();
-      for (const clip of this.clips.values()) clip.pause();
+      for (const { element } of this.clips.values()) element.pause();
     } else {
       this.unlock();
       if (this.ambientRequested) this.playCue('ambient');
@@ -114,23 +138,29 @@ export class AudioManager {
 
   stopAmbient(): void {
     this.ambientRequested = false;
-    this.clips.get('ambient')?.pause();
+    this.clips.get('ambient')?.element.pause();
   }
 
   playCue(name: string): void {
-    if (this.muted || !Object.hasOwn(gains, name)) return;
-    const cue = name as AudioCue;
+    if (Object.hasOwn(gains, name)) this.playClip(name as AudioCue);
+  }
+
+  private playClip(cue: AudioCue, agentId?: string): void {
+    if (this.muted || (this.binding && this.binding.player !== this)) return;
     let clip = this.clips.get(cue);
     if (!clip) {
-      clip = new Audio(this.url(cue));
-      clip.preload = 'auto';
-      clip.loop = cue === 'ambient';
-      clip.volume = gains[cue];
+      const element = new Audio(this.url(cue));
+      element.preload = 'auto';
+      element.loop = cue === 'ambient';
+      element.volume = gains[cue];
+      clip = { element };
       this.clips.set(cue, clip);
     }
-    if (cue === 'ambient' && !clip.paused) return;
-    if (cue !== 'ambient') clip.currentTime = 0;
-    void clip.play().catch(() => undefined);
+    const { element } = clip;
+    if (cue === 'ambient' && !element.paused) return;
+    if (cue !== 'ambient') element.currentTime = 0;
+    clip.agentId = agentId;
+    void element.play().catch(() => undefined);
   }
 
   reset(): void {
@@ -139,7 +169,7 @@ export class AudioManager {
     this.activeAlerts.clear();
     this.agents.clear();
     this.stopVoices();
-    for (const [cue, clip] of this.clips) if (cue !== 'ambient') clip.pause();
+    for (const [cue, { element }] of this.clips) if (cue !== 'ambient') element.pause();
   }
 
   update(snapshot: WorldSnapshot): void {
@@ -165,34 +195,65 @@ export class AudioManager {
       if (agent.role === 'radio_survivor') continue;
       seen.add(agent.id);
       const previous = this.agents.get(agent.id);
+      const state = agent.health <= 0 ? 'dead' : agent.state;
+      const seed = agentSeed(agent.id);
       let growledAt = previous?.growledAt ?? -Infinity;
-      if (!snapshot.paused && previous) {
-        if (agent.health < previous.health) this.playAt('impact', this.worldPosition(agent.position, 1.05));
-        const agitated = agent.state === 'pursue' || agent.state === 'attack' || agent.state === 'alert';
-        if (agitated && agent.state !== previous.state && snapshot.elapsedMs - growledAt >= 950) {
-          this.playAt('growl', this.worldPosition(agent.position, 1.45));
+      let idledAt = previous?.idledAt ?? (snapshot.elapsedMs - (seed % 5) * 1500);
+      let nextGrowl: GrowlCue = previous?.nextGrowl ?? (seed % 2 === 0 ? 'growl' : 'zombie_growl_2');
+      if (state === 'dead' && previous && previous.state !== 'dead') this.stopAgentVoices(agent.id);
+      if (!snapshot.paused && previous && previous.state !== 'dead') {
+        if (agent.health < previous.health) {
+          this.playAt('impact', this.worldPosition(agent.position, 1.05));
+          if (state !== 'dead') {
+            this.playAt('zombie_hurt', this.worldPosition(agent.position, 1.4), agent.id);
+          }
+        }
+        if (state === 'dead') {
+          this.playAt('zombie_death', this.worldPosition(agent.position, 1.2));
+        } else if (state === 'attack' && previous.state !== 'attack') {
+          this.playAt('zombie_attack', this.worldPosition(agent.position, 1.45), agent.id);
           growledAt = snapshot.elapsedMs;
+        } else if (
+          (state === 'pursue' || state === 'alert') &&
+          state !== previous.state &&
+          snapshot.elapsedMs - growledAt >= 950
+        ) {
+          this.playAt(nextGrowl, this.worldPosition(agent.position, 1.45), agent.id);
+          nextGrowl = nextGrowl === 'growl' ? 'zombie_growl_2' : 'growl';
+          growledAt = snapshot.elapsedMs;
+        } else if (
+          (state === 'patrol' || state === 'investigate') &&
+          snapshot.elapsedMs - idledAt >= 7500
+        ) {
+          this.playAt('zombie_idle', this.worldPosition(agent.position, 1.4), agent.id);
+          idledAt = snapshot.elapsedMs;
         }
       }
-      this.agents.set(agent.id, { state: agent.state, health: agent.health, growledAt });
+      this.agents.set(agent.id, { state, health: agent.health, growledAt, idledAt, nextGrowl });
     }
-    for (const id of this.agents.keys()) if (!seen.has(id)) this.agents.delete(id);
+    for (const id of this.agents.keys()) {
+      if (seen.has(id)) continue;
+      this.agents.delete(id);
+      this.stopAgentVoices(id);
+    }
 
     const activeAlerts = new Set<string>();
     for (const alert of snapshot.activeAlerts) {
-      if (alert.hops.length === 0) continue;
       const key = JSON.stringify([alert.originAgentId, alert.hops.map(({ fromAgentId, toAgentId, depth }) => [fromAgentId, toAgentId, depth])]);
+      const repeated = this.activeAlerts.has(key) || activeAlerts.has(key);
       activeAlerts.add(key);
-      if (!snapshot.paused && !this.activeAlerts.has(key)) {
+      if (snapshot.paused || repeated) continue;
+      const state = this.agents.get(alert.originAgentId)?.state;
+      if (state && state !== 'dead') {
         const origin = snapshot.agents.find((agent) => agent.id === alert.originAgentId);
-        this.playAt('zombie_alert', origin ? this.worldPosition(origin.position, 1.4) : undefined);
+        if (origin) this.playAt('zombie_alert', this.worldPosition(origin.position, 1.4), origin.id);
       }
     }
     this.activeAlerts = activeAlerts;
   }
 
   private unlock(): void {
-    if (this.muted) return;
+    if (this.muted || (this.binding && this.binding.player !== this)) return;
     this.unlocked = true;
     if (!this.binding) return;
     let listener = this.listener;
@@ -209,11 +270,11 @@ export class AudioManager {
     if (listener.context.state === 'suspended') void listener.context.resume().catch(() => undefined);
   }
 
-  private playAt(cue: SoundCue, position?: THREE.Vector3): void {
+  private playAt(cue: SoundCue, position?: THREE.Vector3, agentId?: string): void {
     if (this.muted || !this.unlocked) return;
     const listener = this.listener;
     if (!listener || !position) {
-      this.playCue(cue);
+      this.playClip(cue, agentId);
       return;
     }
     listener.getWorldPosition(this.cameraPosition);
@@ -223,11 +284,18 @@ export class AudioManager {
     const { context } = listener;
     void this.loadBuffer(cue, context).then((buffer) => {
       if (!buffer || generation !== this.generation || context.state !== 'running') return;
-      this.startVoice(listener, buffer, cue, location);
+      if (agentId !== undefined && (this.agents.get(agentId)?.state ?? 'dead') === 'dead') return;
+      this.startVoice(listener, buffer, cue, location, agentId);
     }).catch(() => undefined);
   }
 
-  private startVoice(listener: THREE.AudioListener, buffer: AudioBuffer, cue: SoundCue, position: THREE.Vector3): void {
+  private startVoice(
+    listener: THREE.AudioListener,
+    buffer: AudioBuffer,
+    cue: SoundCue,
+    position: THREE.Vector3,
+    agentId?: string,
+  ): void {
     const oldest = this.voices.values().next().value;
     if (this.voices.size >= MAX_VOICES && oldest) this.releaseVoice(oldest, true);
     const { context } = listener;
@@ -244,17 +312,27 @@ export class AudioManager {
     panner.positionY.value = position.y;
     panner.positionZ.value = position.z;
     gain.gain.value = gains[cue];
-    source.connect(panner).connect(gain).connect(listener.getInput());
-    const voice = { source, panner, gain };
+    const voice: Voice = { source, panner, gain, agentId };
     this.voices.add(voice);
-    source.onended = () => this.releaseVoice(voice, false);
-    source.start();
+    try {
+      source.connect(panner).connect(gain).connect(listener.getInput());
+      source.onended = () => this.releaseVoice(voice, false);
+      source.start();
+    } catch {
+      this.releaseVoice(voice, false);
+    }
   }
 
   private releaseVoice(voice: Voice, stop: boolean): void {
     if (!this.voices.delete(voice)) return;
     voice.source.onended = null;
-    if (stop) voice.source.stop();
+    if (stop) {
+      try {
+        voice.source.stop();
+      } catch {
+        // Disconnect the nodes even if the source could not be stopped.
+      }
+    }
     voice.source.disconnect();
     voice.panner.disconnect();
     voice.gain.disconnect();
@@ -265,7 +343,17 @@ export class AudioManager {
     for (const voice of this.voices) this.releaseVoice(voice, true);
   }
 
+  private stopAgentVoices(id: string): void {
+    for (const voice of this.voices) {
+      if (voice.agentId === id) this.releaseVoice(voice, true);
+    }
+    for (const { agentId, element } of this.clips.values()) {
+      if (agentId === id) element.pause();
+    }
+  }
+
   private releaseSpatialAudio(): void {
+    if (this.binding?.player === this) this.binding.player = null;
     this.reset();
     this.stopAmbient();
     this.unlocked = false;
