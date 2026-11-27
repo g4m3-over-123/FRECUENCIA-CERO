@@ -3,7 +3,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
+import { CollisionMask } from './collisionMask.ts';
 import { landmark, streetLamps } from './props.ts';
+
+/** street.glb ground mesh: its road sits up to 0.85 m below the sidewalks. */
+const GROUND_MESH = /^Plane\.?002(?:_|$)/i;
+/** The game treats the ground as flat at Y = 0, so the sunken road is raised to this height. */
+const ROAD_SURFACE_Y = -0.04;
+/** Props taller than this above the ground block the player (same band as the map generator). */
+const BODY_BAND = { low: 0.1, high: 1.9 };
+const LAMP_POLE_HALF = 0.08;
 
 function freezeTransform(obj: THREE.Object3D): void {
   obj.updateMatrix();
@@ -18,6 +27,7 @@ export class WorldBuilder {
   readonly root = new THREE.Group();
   private readonly collidables: THREE.Object3D[] = [];
   private gridOverlay: THREE.Group | null = null;
+  private collision: CollisionMask | null = null;
 
   constructor(private readonly scene: THREE.Scene) {
     this.root.name = 'world';
@@ -27,7 +37,10 @@ export class WorldBuilder {
   async build(map: MapDefinition): Promise<void> {
     if (map.world?.asset) {
       try {
-        await this.loadAsset(map);
+        [, this.collision] = await Promise.all([
+          this.loadAsset(map),
+          CollisionMask.load(`${import.meta.env.BASE_URL}maps/${map.id}.collision.json`),
+        ]);
       } catch (error) {
         console.warn(`[WorldBuilder] Could not load ${map.world.asset.url}; using grid blocks.`, error);
         this.buildBlocks(map);
@@ -39,6 +52,11 @@ export class WorldBuilder {
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
+  }
+
+  /** Fine player collision for the GLB map, or null to collide with whole grid cells. */
+  getPlayerCollision(): CollisionMask | null {
+    return this.collision;
   }
 
   /** Meshes that stop bullets (used by the weapon raycast). */
@@ -65,6 +83,10 @@ export class WorldBuilder {
         obj.receiveShadow = true;
       }
       freezeTransform(obj);
+    });
+    model.updateMatrixWorld(true);
+    model.traverse((obj) => {
+      if (obj instanceof THREE.Mesh && GROUND_MESH.test(obj.name)) raiseRoad(obj);
     });
     this.root.add(model);
     this.collidables.push(model);
@@ -145,6 +167,7 @@ export class WorldBuilder {
       model.traverse(obj => {
         if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
       });
+      this.blockProp(model);
       reserved.push(edge.cell);
     }
 
@@ -160,11 +183,29 @@ export class WorldBuilder {
       for (const s of sites) s.clearance = Math.min(s.clearance, distanceSq(s.edge.cell, site.edge.cell));
     }
     if (mounts.length) {
+      const pole = new THREE.Vector3();
+      for (const mount of mounts) {
+        pole.setFromMatrixPosition(mount);
+        this.collision?.stamp(pole.x - LAMP_POLE_HALF, pole.z - LAMP_POLE_HALF, pole.x + LAMP_POLE_HALF, pole.z + LAMP_POLE_HALF);
+      }
       const lamps = streetLamps(mounts);
       lamps.traverse(freezeTransform);
       this.root.add(lamps);
       this.collidables.push(lamps);
     }
+  }
+
+  /** Stamps the body-height parts of a runtime prop into the player collision mask. */
+  private blockProp(model: THREE.Object3D): void {
+    if (!this.collision) return;
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    model.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      box.setFromObject(obj);
+      if (box.max.y < BODY_BAND.low || box.min.y > BODY_BAND.high) return;
+      this.collision!.stamp(box.min.x, box.min.z, box.max.x, box.max.z);
+    });
   }
 
   private createGridOverlay(map: MapDefinition): THREE.Group {
@@ -191,4 +232,23 @@ export class WorldBuilder {
     make(map.cells.filter((c) => !c.walkable), 0xef4444);
     return group;
   }
+}
+
+/** Lifts every ground vertex below ROAD_SURFACE_Y up to it, in world space. */
+function raiseRoad(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry.clone();
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const toLocal = mesh.matrixWorld.clone().invert();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < position.count; i++) {
+    v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+    if (v.y >= ROAD_SURFACE_Y) continue;
+    v.y = ROAD_SURFACE_Y;
+    v.applyMatrix4(toLocal);
+    position.setXYZ(i, v.x, v.y, v.z);
+  }
+  position.needsUpdate = true;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  mesh.geometry = geometry;
 }

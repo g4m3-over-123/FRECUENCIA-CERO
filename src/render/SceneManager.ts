@@ -274,7 +274,8 @@ export class SceneManager {
     });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
+    // Filler beyond the map, kept well under the street mesh so it never hides the road.
+    ground.position.y = -0.3;
     ground.receiveShadow = true;
     ground.name = 'base-night-ground';
     this.scene.add(ground);

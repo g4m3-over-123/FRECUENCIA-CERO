@@ -15,6 +15,8 @@
  *    (default 0.35 m to 1.9 m above the ground). Overhead cables and curbs are ignored.
  * 5. Keeps the largest connected walkable component and selects narrative zones
  *    (spawnMara, pharmacy, refuge, extraction) with balanced BFS distances.
+ * 6. Writes <out>.collision.json: the same sampling at 1/4 cell, used by the FPV player so it
+ *    collides with the real wall faces instead of whole 1 m cells.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
@@ -490,6 +492,15 @@ function pickNarrativeZones(
   return { spawn, pharmacy, refuge, extraction };
 }
 
+/** Upward-facing enough to stand on. */
+function isFlatFloor(p: Vec3[]): boolean {
+  const ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2];
+  const vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz);
+  return len >= 1e-9 && Math.abs(ny / len) >= 0.75;
+}
+
 async function generateMap(opts: Options): Promise<void> {
   const triangles = (await readTriangles(opts.input)).map((tri) => {
     const scaled = tri.map((v) => v.map((c) => c * opts.scale) as Vec3) as Triangle;
@@ -525,11 +536,9 @@ async function generateMap(opts: Options): Promise<void> {
   const topHeight = new Float32Array(width * height);
   const step = Math.min(0.2, cs / 4);
   const markFloor = (p: Vec3[]): void => {
-    const ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2];
-    const vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];
-    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const len = Math.hypot(nx, ny, nz);
-    if (len < 1e-9 || Math.abs(ny / len) < 0.85) return;
+    if (!isFlatFloor(p)) return;
+    const ux = p[1][0] - p[0][0], uz = p[1][2] - p[0][2];
+    const vx = p[2][0] - p[0][0], vz = p[2][2] - p[0][2];
     const edge = Math.max(Math.hypot(ux, uz), Math.hypot(vx, vz), Math.hypot(p[2][0] - p[1][0], p[2][2] - p[1][2]));
     const k = Math.max(1, Math.ceil(edge / step));
     for (let i = 0; i <= k; i++) {
@@ -622,6 +631,92 @@ async function generateMap(opts: Options): Promise<void> {
   const isMain = (i: number): boolean => component[i] === main;
   const toCoord = (i: number): GridCoord => ({ row: Math.floor(i / width), col: i % width });
 
+  // Player collision mask at 1/4 cell. Open: every sub-cell of a walkable cell, plus the free,
+  // floored sub-cells of blocked cells that touch the walkable area (the strip in front of a
+  // wall that only grazes its cell). Only the part reachable from the walkable area is kept.
+  const fine = 4;
+  const fcs = cs / fine;
+  const fw = width * fine;
+  const fh = height * fine;
+  const fineBlocked = new Uint8Array(fw * fh);
+  const fineFloor = new Uint8Array(fw * fh);
+  const fineStep = fcs / 2;
+  const sampleTriangle = (p: Vec3[], visit: (x: number, y: number, z: number) => void): void => {
+    const edge = Math.max(
+      Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]),
+      Math.hypot(p[2][0] - p[1][0], p[2][1] - p[1][1], p[2][2] - p[1][2]),
+      Math.hypot(p[0][0] - p[2][0], p[0][1] - p[2][1], p[0][2] - p[2][2])
+    );
+    const k = Math.max(1, Math.ceil(edge / fineStep));
+    for (let i = 0; i <= k; i++) {
+      for (let j = 0; j <= k - i; j++) {
+        const u = i / k, v = j / k, w = 1 - u - v;
+        visit(
+          p[0][0] * w + p[1][0] * u + p[2][0] * v,
+          p[0][1] * w + p[1][1] * u + p[2][1] * v,
+          p[0][2] * w + p[1][2] * u + p[2][2] * v
+        );
+      }
+    }
+  };
+  const fineIndex = (x: number, z: number): number => {
+    const fc = Math.floor((x - origin.x) / fcs);
+    const fr = Math.floor((z - origin.z) / fcs);
+    return fr < 0 || fr >= fh || fc < 0 || fc >= fw ? -1 : fr * fw + fc;
+  };
+  for (const tri of triangles) {
+    const p = tri.map((v) => [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]] as Vec3);
+    const yMin = Math.min(p[0][1], p[1][1], p[2][1]);
+    const yMax = Math.max(p[0][1], p[1][1], p[2][1]);
+    if (yMax < 0.3 && yMin > -1.2 && isFlatFloor(p)) {
+      sampleTriangle(p, (x, _y, z) => {
+        const i = fineIndex(x, z);
+        if (i >= 0) fineFloor[i] = 1;
+      });
+    }
+    if (yMax < opts.bandLow || yMin > opts.bandHigh) continue;
+    sampleTriangle(p, (x, y, z) => {
+      if (y < opts.bandLow || y > opts.bandHigh) return;
+      const i = fineIndex(x, z);
+      if (i >= 0) fineBlocked[i] = 1;
+    });
+  }
+  const touchesMain = (row: number, col: number): boolean => {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = row + dr, c = col + dc;
+        if (r >= 0 && r < height && c >= 0 && c < width && isMain(r * width + c)) return true;
+      }
+    }
+    return false;
+  };
+  const fineOpen = new Uint8Array(fw * fh);
+  for (let fr = 0; fr < fh; fr++) {
+    for (let fc = 0; fc < fw; fc++) {
+      const row = Math.floor(fr / fine), col = Math.floor(fc / fine);
+      const parent = row * width + col;
+      const i = fr * fw + fc;
+      fineOpen[i] = isMain(parent) ||
+        (floor[parent] && touchesMain(row, col) && !fineBlocked[i] && fineFloor[i]) ? 1 : 0;
+    }
+  }
+  const mainStart = component.indexOf(main);
+  const fineStart = (Math.floor(mainStart / width) * fine) * fw + (mainStart % width) * fine;
+  const fineReach = new Uint8Array(fw * fh);
+  fineReach[fineStart] = 1;
+  for (const queue = [fineStart]; queue.length;) {
+    const cur = queue.pop()!;
+    const r = Math.floor(cur / fw), c = cur % fw;
+    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= fh || nc < 0 || nc >= fw) continue;
+      const n = nr * fw + nc;
+      if (!fineOpen[n] || fineReach[n]) continue;
+      fineReach[n] = 1;
+      queue.push(n);
+    }
+  }
+
   const { spawn, pharmacy, refuge, extraction } = pickNarrativeZones(
     width,
     height,
@@ -696,6 +791,14 @@ async function generateMap(opts: Options): Promise<void> {
     },
   };
   writeFileSync(opts.output, JSON.stringify(map, null, 2) + '\n');
+  const collisionPath = opts.output.replace(/\.json$/, '') + '.collision.json';
+  const rows: string[] = [];
+  for (let fr = 0; fr < fh; fr++) {
+    let line = '';
+    for (let fc = 0; fc < fw; fc++) line += fineReach[fr * fw + fc] ? '.' : '#';
+    rows.push(line);
+  }
+  writeFileSync(collisionPath, JSON.stringify({ cellSize: fcs, width: fw, height: fh, origin, rows }) + '\n');
 
   const glyph: Partial<Record<CellType, string>> = {
     street: '.',

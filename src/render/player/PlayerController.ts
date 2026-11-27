@@ -8,6 +8,7 @@ import {
   type WorldPoint,
 } from '../../core/world/gridSpace.ts';
 import type { SceneManager } from '../SceneManager.ts';
+import type { CollisionMask } from '../world/collisionMask.ts';
 
 /**
  * Phase 0 FPV player: WASD movement with collision against the logical grid, posture
@@ -18,12 +19,24 @@ import type { SceneManager } from '../SceneManager.ts';
 
 const SPEED: Record<MaraPosture, number> = { stealth: 1.7, walk: 3.2, sprint: 5.6 };
 const PLAYER_RADIUS = 0.28;
+/** Longest move between collision checks; well under the radius so walls are never skipped. */
+const MAX_SUBSTEP = 0.1;
+const MAX_PUSHES = 8;
+
+interface Box {
+  minX: number;
+  minZ: number;
+  maxX: number;
+  maxZ: number;
+}
 
 export interface PlayerControllerOptions {
   /** Extra blocked cells (dynamic barricades from the snapshot). */
   isDynamicallyBlocked?: (cell: GridCoord) => boolean;
   /** Stamina gate for sprint (the engine also enforces it). */
   canSprint?: () => boolean;
+  /** Fine collision against the real walls; without it the player collides with whole cells. */
+  collision?: CollisionMask | null;
 }
 
 export class PlayerController {
@@ -31,8 +44,8 @@ export class PlayerController {
   private readonly isStaticWalkable: (cell: GridCoord) => boolean;
   private position: WorldPoint = { x: 0, z: 0 };
   private cell: GridCoord = { row: 0, col: 0 };
-  private cellCenter: WorldPoint;
   private readonly probe: GridCoord = { row: 0, col: 0 };
+  private readonly boxes: Box[] = [];
   private posture: MaraPosture = 'walk';
   private facing: GridCoord = { row: 0, col: 1 };
   private readonly forward = new THREE.Vector3();
@@ -45,7 +58,6 @@ export class PlayerController {
     private readonly options: PlayerControllerOptions = {}
   ) {
     this.isStaticWalkable = createWalkableLookup(map);
-    this.cellCenter = gridToWorld(this.cell, map);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -53,7 +65,6 @@ export class PlayerController {
 
   spawn(cell: GridCoord): void {
     this.position = gridToWorld(cell, this.map);
-    this.cellCenter = { ...this.position };
     this.cell = { ...cell };
     this.sceneManager.setPlayerPose(this.position.x, this.position.z, false, 1);
     this.posture = 'walk';
@@ -123,22 +134,28 @@ export class PlayerController {
     this.sceneManager.getForwardVector(this.forward);
     const facing = worldDirectionToGrid(this.forward.x, this.forward.z);
 
-    const recovering = this.recoverFromBarricade(dt);
-    if (moving && !recovering) {
-      let dx = this.forward.x * forwardInput - this.forward.z * strafeInput;
-      let dz = this.forward.z * forwardInput + this.forward.x * strafeInput;
+    if (moving) {
+      const dx = this.forward.x * forwardInput - this.forward.z * strafeInput;
+      const dz = this.forward.z * forwardInput + this.forward.x * strafeInput;
       const len = Math.hypot(dx, dz) || 1;
-      const step = SPEED[posture] * Math.min(dt, 0.05);
-      dx = (dx / len) * step;
-      dz = (dz / len) * step;
-      // Axis-separated moves let the player slide along walls.
-      this.slideAxis('x', dx);
-      this.slideAxis('z', dz);
+      // SceneManager already caps dt at 0.1 s; sub-steps keep the speed right on slow frames.
+      const distance = SPEED[posture] * dt;
+      const steps = Math.max(1, Math.ceil(distance / MAX_SUBSTEP));
+      const stepX = (dx / len) * (distance / steps);
+      const stepZ = (dz / len) * (distance / steps);
+      for (let i = 0; i < steps; i++) {
+        this.position.x += stepX;
+        this.position.z += stepZ;
+        this.resolveCollisions();
+      }
+    } else {
+      // A barricade can appear next to a standing player: push out of it.
+      this.resolveCollisions();
     }
 
     this.sceneManager.setPlayerPose(this.position.x, this.position.z, posture === 'stealth', dt);
 
-    const cell = moving && !recovering ? worldToGrid(this.position, this.map) : this.cell;
+    const cell = this.logicalCell();
     const movedCell = cell.row !== this.cell.row || cell.col !== this.cell.col;
     const changed =
       movedCell ||
@@ -148,7 +165,6 @@ export class PlayerController {
     this.posture = posture;
     if (facing.row !== 0 || facing.col !== 0) this.facing = facing;
     if (changed && this.isWalkable(cell)) {
-      if (movedCell) this.cellCenter = gridToWorld(cell, this.map);
       this.cell = cell;
       this.emitMove();
     }
@@ -168,59 +184,120 @@ export class PlayerController {
     return this.isStaticWalkable(cell) && !(this.options.isDynamicallyBlocked?.(cell) ?? false);
   }
 
-  private recoverFromBarricade(dt: number): boolean {
-    const blocked = this.options.isDynamicallyBlocked;
-    if (!blocked) return false;
-    const dx = this.position.x - this.cellCenter.x;
-    const dz = this.position.z - this.cellCenter.z;
-    const half = this.map.cellSize / 2;
-    const gapX = half - Math.abs(dx);
-    const gapZ = half - Math.abs(dz);
-    const col = this.cell.col + Math.sign(dx);
-    const row = this.cell.row + Math.sign(dz);
-    this.probe.row = this.cell.row;
-    this.probe.col = col;
-    let overlaps = gapX < PLAYER_RADIUS && blocked(this.probe);
-    this.probe.row = row;
-    this.probe.col = this.cell.col;
-    overlaps ||= gapZ < PLAYER_RADIUS && blocked(this.probe);
-    this.probe.col = col;
-    overlaps ||= gapX * gapX + gapZ * gapZ < PLAYER_RADIUS ** 2 && blocked(this.probe);
-    if (!overlaps) return false;
-    const correction = 1 - Math.exp(-12 * dt);
-    this.position.x -= dx * correction;
-    this.position.z -= dz * correction;
-    return true;
+  /**
+   * Cell reported to the simulation. Fine collision lets the player stand in the strip of a
+   * blocked cell in front of a wall; then the closest walkable neighbour is reported.
+   */
+  private logicalCell(): GridCoord {
+    const here = worldToGrid(this.position, this.map);
+    if (this.isWalkable(here)) return here;
+    let best: GridCoord | null = null;
+    let bestDistance = Infinity;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const cell = { row: here.row + dr, col: here.col + dc };
+        if (!this.isWalkable(cell)) continue;
+        const center = gridToWorld(cell, this.map);
+        const distance = (center.x - this.position.x) ** 2 + (center.z - this.position.z) ** 2;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = cell;
+        }
+      }
+    }
+    return best ?? this.cell;
   }
 
-  /** Sweep the player's circle to the first contact along this axis. */
-  private slideAxis(axis: 'x' | 'z', delta: number): void {
-    if (delta === 0) return;
-    const { x, z } = this.position;
-    const endX = axis === 'x' ? x + delta : x;
-    const endZ = axis === 'z' ? z + delta : z;
+  /** Solid boxes that may touch the player's circle: fine walls, then grid cells or barricades. */
+  private collectBoxes(): Box[] {
+    const boxes = this.boxes;
+    boxes.length = 0;
     const r = PLAYER_RADIUS;
-    const min = worldToGrid({ x: Math.min(x, endX) - r, z: Math.min(z, endZ) - r }, this.map);
-    const max = worldToGrid({ x: Math.max(x, endX) + r, z: Math.max(z, endZ) + r }, this.map);
-    const across = axis === 'x' ? 'z' : 'x';
+    const { x, z } = this.position;
+    const mask = this.options.collision;
+    if (mask) {
+      const s = mask.cellSize;
+      const c0 = Math.floor((x - r - mask.origin.x) / s);
+      const c1 = Math.floor((x + r - mask.origin.x) / s);
+      const r0 = Math.floor((z - r - mask.origin.z) / s);
+      const r1 = Math.floor((z + r - mask.origin.z) / s);
+      for (let row = r0; row <= r1; row++) {
+        for (let col = c0; col <= c1; col++) {
+          if (!mask.isSolid(row, col)) continue;
+          const minX = mask.origin.x + col * s;
+          const minZ = mask.origin.z + row * s;
+          boxes.push({ minX, minZ, maxX: minX + s, maxZ: minZ + s });
+        }
+      }
+    }
+    const min = worldToGrid({ x: x - r, z: z - r }, this.map);
+    const max = worldToGrid({ x: x + r, z: z + r }, this.map);
     const half = this.map.cellSize / 2;
-    const start = this.position[axis];
-    let travel = Math.abs(delta);
-    const sign = Math.sign(delta);
     for (let row = min.row; row <= max.row; row++) {
       for (let col = min.col; col <= max.col; col++) {
         this.probe.row = row;
         this.probe.col = col;
-        if (this.isWalkable(this.probe)) continue;
+        const blocked = mask
+          ? this.options.isDynamicallyBlocked?.(this.probe) ?? false
+          : !this.isWalkable(this.probe);
+        if (!blocked) continue;
         const center = gridToWorld(this.probe, this.map);
-        const gap = Math.max(0, Math.abs(center[across] - this.position[across]) - half);
-        const ahead = (center[axis] - start) * sign;
-        if (gap >= r || ahead <= 0) continue;
-        const contact = ahead - half - Math.sqrt(r * r - gap * gap);
-        travel = Math.min(travel, Math.max(0, contact - 1e-7));
+        boxes.push({ minX: center.x - half, minZ: center.z - half, maxX: center.x + half, maxZ: center.z + half });
       }
     }
-    this.position[axis] += sign * travel;
+    return boxes;
+  }
+
+  /**
+   * Pushes the player's circle out of solid boxes, deepest contact first, so it slides along
+   * walls and round corners without catching on the seams between neighbouring boxes.
+   */
+  private resolveCollisions(): void {
+    const r = PLAYER_RADIUS;
+    const boxes = this.collectBoxes();
+    for (let push = 0; push < MAX_PUSHES; push++) {
+      let deepest = 0;
+      let pushX = 0;
+      let pushZ = 0;
+      const { x, z } = this.position;
+      for (const box of boxes) {
+        const nearX = Math.min(Math.max(x, box.minX), box.maxX);
+        const nearZ = Math.min(Math.max(z, box.minZ), box.maxZ);
+        const dx = x - nearX;
+        const dz = z - nearZ;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= r * r) continue;
+        let depth: number;
+        let nx: number;
+        let nz: number;
+        if (d2 > 1e-12) {
+          const d = Math.sqrt(d2);
+          depth = r - d;
+          nx = dx / d;
+          nz = dz / d;
+        } else {
+          // Centre inside the box: leave through the nearest face.
+          const exits = [
+            [x - box.minX, -1, 0],
+            [box.maxX - x, 1, 0],
+            [z - box.minZ, 0, -1],
+            [box.maxZ - z, 0, 1],
+          ];
+          const [inside, ex, ez] = exits.reduce((a, b) => (b[0] < a[0] ? b : a));
+          depth = inside + r;
+          nx = ex;
+          nz = ez;
+        }
+        if (depth > deepest) {
+          deepest = depth;
+          pushX = nx * depth;
+          pushZ = nz * depth;
+        }
+      }
+      if (deepest <= 1e-6) return;
+      this.position.x += pushX * 1.0001;
+      this.position.z += pushZ * 1.0001;
+    }
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
