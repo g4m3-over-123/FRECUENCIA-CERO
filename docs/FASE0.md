@@ -61,6 +61,22 @@ En desarrollo, la consola del navegador expone `__game` (`__game.loop.latest()`,
 - **El panel tapa la derecha de la pantalla.** M lo oculta.
 - **Assets.** `dev-felipe` ya esta mezclado: armas en `public/assets/weapons/`, su calle como `public/assets/props/street_felipe.glb` (el `street.glb` del mapa sigue siendo el de Diego) y `abandoned_city_street_for_games.glb` en props. Todo comprimido por debajo de 15 MB. Todavia no se cargan en el juego: Frente B reemplaza el arma de caja por uno de estos modelos y Frente A decide si usa otra calle. Falta llenar origen y licencia en `docs/CREDITS.md`. Birkin quedo fuera (ver `docs/CREDITS.md`).
 
+## Flujo de git
+
+| Frente | Rama |
+| --- | --- |
+| A. Mundo y jugador (Diego) | `feat/world-fpv` |
+| B. Personajes, arma y audio (Felipe) | `feat/characters-weapons` |
+| C. Gameplay y agentes (marlon890) | `feat/gameplay-combat` |
+| D. Algoritmos, Rayos X, HUD y docs (Physanto) | `feat/debug-hud-docs` |
+
+1. Una sola vez: `git fetch origin && git checkout <tu-rama>`. Las ramas ya existen en GitHub, creadas desde `develop`.
+2. Trabajar solo en las carpetas de tu frente (`AGENTS.md`). Commits pequenos y frecuentes.
+3. Antes de cada push: `npm run build`, `npm test` y `npm run check:assets` sin errores.
+4. Traer lo nuevo de los demas al menos una vez al dia: `git pull origin develop`.
+5. Cuando algo funcione, abrir un PR de tu rama a `develop`. Nadie hace push directo a `develop` ni a `main`.
+6. `develop` pasa a `main` solo en cada checkpoint, cuando todo funciona junto.
+
 ## Herramientas
 
 - `npm run map:street`: regenera `public/maps/map_street.json` desde `street.glb`. Opciones: `--cell 1`, `--scale 2`, `--band 0.35,1.9` (franja de altura que bloquea el paso). `DEBUG_CELL="fila,col"` imprime que mallas bloquean una celda.

@@ -18,5 +18,5 @@ Cada asset descargado debe tener aqui su origen y su licencia. Si la licencia no
 ## Notas
 
 - Los GLB de Felipe se comprimieron al mezclarlos: texturas a 2048 px como maximo y en WebP (`EXT_texture_webp`, Three.js lo carga sin configurar nada). Mallas, esqueletos y animaciones no cambiaron.
-- `m4_-_fps_weapon_animations_pack_v.1.glb` usa `KHR_materials_pbrSpecularGlossiness`, que Three.js ya no soporta: puede verse sin color. Conviene convertirlo a metal/rugosidad o elegir otra M4.
+- `m4_-_fps_weapon_animations_pack_v.1.glb` usaba `KHR_materials_pbrSpecularGlossiness`, que Three.js ya no soporta. Se convirtio a metal/rugosidad (`gltf-transform metalrough`); mallas y animaciones no cambiaron.
 - `william_birkin_stage.glb` no se mezclo: pesa 22 MB aun comprimido y es un personaje de Capcom (Resident Evil 2), con riesgo de licencia. Sigue en la rama `dev-felipe`. Para los zombis usar un modelo con licencia libre (CC0 o CC-BY).
