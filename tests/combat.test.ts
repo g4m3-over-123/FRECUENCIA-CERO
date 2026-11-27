@@ -273,7 +273,7 @@ describe('Street agent acceptance', () => {
 
   it('keeps a threat behind opaque cells out of the radio survivor\'s visual memory', () => {
     const refuge = cell(44, 35);
-    const threat = cell(38, 35);
+    const threat = cell(38, 32); // behind the building block west of the refuge
     const engine = streetEngine([
       spawn('radio', refuge, 'radio_survivor'),
       spawn('zombie', threat),

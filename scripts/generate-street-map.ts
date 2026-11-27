@@ -161,7 +161,7 @@ async function main(): Promise<void> {
     const vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const len = Math.hypot(nx, ny, nz);
-    if (len < 1e-9 || Math.abs(ny / len) < 0.85) return;
+    if (len < 1e-9 || Math.abs(ny / len) < 0.75) return;
     const edge = Math.max(Math.hypot(ux, uz), Math.hypot(vx, vz), Math.hypot(p[2][0] - p[1][0], p[2][2] - p[1][2]));
     const k = Math.max(1, Math.ceil(edge / step));
     for (let i = 0; i <= k; i++) {
@@ -181,7 +181,7 @@ async function main(): Promise<void> {
     const p = tri.map((v) => [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]] as Vec3);
     const yMin = Math.min(p[0][1], p[1][1], p[2][1]);
     const yMax = Math.max(p[0][1], p[1][1], p[2][1]);
-    if (yMax < 0.3 && yMin > -0.6) markFloor(p);
+    if (yMax < 0.3 && yMin > -1.2) markFloor(p);
     if (yMax < opts.bandLow || yMin > opts.bandHigh) continue;
     const edge = Math.max(
       Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]),

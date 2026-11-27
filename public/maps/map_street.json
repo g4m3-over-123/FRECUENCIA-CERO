@@ -9093,10 +9093,9 @@
     {
       "row": 24,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 24,
@@ -9359,10 +9358,9 @@
     {
       "row": 25,
       "col": 23,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 25,
@@ -9437,18 +9435,16 @@
     {
       "row": 25,
       "col": 34,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 25,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 25,
@@ -9711,10 +9707,9 @@
     {
       "row": 26,
       "col": 23,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 26,
@@ -9796,10 +9791,9 @@
     {
       "row": 26,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 26,
@@ -10053,18 +10047,16 @@
     {
       "row": 27,
       "col": 22,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 27,
       "col": 23,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 27,
@@ -13279,10 +13271,9 @@
     {
       "row": 36,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 36,
@@ -13630,26 +13621,23 @@
     {
       "row": 37,
       "col": 19,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 37,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 37,
       "col": 21,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 37,
@@ -13988,26 +13976,23 @@
     {
       "row": 38,
       "col": 19,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 38,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 38,
       "col": 21,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 38,
@@ -14345,26 +14330,23 @@
     {
       "row": 39,
       "col": 19,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 39,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 39,
       "col": 21,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 39,
@@ -14461,10 +14443,9 @@
     {
       "row": 39,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 39,
@@ -14698,26 +14679,23 @@
     {
       "row": 40,
       "col": 19,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 40,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 40,
       "col": 21,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 40,
@@ -14823,10 +14801,9 @@
     {
       "row": 40,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 40,
@@ -15067,18 +15044,16 @@
     {
       "row": 41,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 41,
       "col": 21,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 41,
@@ -15183,10 +15158,9 @@
     {
       "row": 41,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 41,
@@ -15427,10 +15401,9 @@
     {
       "row": 42,
       "col": 20,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 42,
@@ -15535,18 +15508,16 @@
     {
       "row": 42,
       "col": 34,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 42,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 42,
@@ -15901,10 +15872,9 @@
     {
       "row": 43,
       "col": 35,
-      "type": "obstacle",
-      "walkable": false,
-      "cost": 999,
-      "elevation": 1
+      "type": "street",
+      "walkable": true,
+      "cost": 1
     },
     {
       "row": 43,

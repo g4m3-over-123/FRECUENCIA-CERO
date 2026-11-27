@@ -3,7 +3,10 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 
 const ASSET = 'fps_character_animation_pack_saps-12.glb';
 const PREFIX = 'RIG_UE5_Comando_';
-const REST = new THREE.Vector3(.015, -.14, -.27);
+// Puts the rig's eye (its 'Camera' node, model space (0, 3.864, 0.054)) on the game camera,
+// so the arms are seen from where the animation pack was authored. With the eye 0.29 m ahead
+// of the camera the left shoulder and upper arm showed up as a large blob at the bottom left.
+const REST = new THREE.Vector3(.02, -.15, .02);
 
 type Motion = { clip: THREE.AnimationClip; seconds?: number };
 
