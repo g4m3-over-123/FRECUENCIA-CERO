@@ -59,7 +59,7 @@ En desarrollo, la consola del navegador expone `__game` (`__game.loop.latest()`,
 - **Ruido y balance.** Los radios de sonido y la vista de los zombis estaban pensados para celdas de 2 m. Con celdas de 1 m todo es la mitad de grande. Frente C ajusta.
 - **Ataque cuerpo a cuerpo.** El zombi golpea cuando esta en tu misma celda, cada dos ticks (12 de dano el explorador, 18 el perseguidor). Frente C ajusta.
 - **El panel tapa la derecha de la pantalla.** M lo oculta.
-- **Assets.** `dev-felipe` ya esta mezclado: armas en `public/assets/weapons/`, su calle como `public/assets/props/street_felipe.glb` (el `street.glb` del mapa sigue siendo el de Diego) y `abandoned_city_street_for_games.glb` en props. Todo comprimido por debajo de 15 MB. Todavia no se cargan en el juego: Frente B reemplaza el arma de caja por uno de estos modelos y Frente A decide si usa otra calle. Falta llenar origen y licencia en `docs/CREDITS.md`. Birkin quedo fuera (ver `docs/CREDITS.md`).
+- **Assets.** `dev-felipe` ya esta mezclado: armas en `public/assets/weapons/`, su calle como `public/assets/props/street_felipe.glb` (el `street.glb` del mapa sigue siendo el de Diego) y `abandoned_city_street_for_games.glb` en props. El personaje `public/assets/characters/william_birkin_stage.glb` tambien. Todo comprimido por debajo de 15 MB. Todavia no se cargan en el juego: Frente B reemplaza el arma de caja por uno de estos modelos y Frente A decide si usa otra calle.
 
 ## Flujo de git
 

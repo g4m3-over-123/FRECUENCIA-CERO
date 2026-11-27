@@ -22,7 +22,7 @@ import {
 } from './ui/MonitorPanel.ts';
 
 /**
- * Integration entry point (owned by the integrator). URL parameters:
+ * Integration entry point (shared base, coordinate changes with the team). URL parameters:
  *   ?map=map_street|map_small|map_medium|map_large   (default map_street)
  *   ?mock=1        fake snapshots instead of the SimulationEngine (render/HUD work)
  *   ?seed=1337     simulation seed

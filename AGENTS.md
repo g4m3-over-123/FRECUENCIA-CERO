@@ -5,20 +5,20 @@ Read `docs/FASE0.md` first: it explains the integration base every front builds 
 
 ## 1. Exclusive Folder Ownership by Front
 
-- **Integrator (Phase 0 base)**: `src/core/contracts.ts`, `src/core/world/`, `src/game/`, `src/dev/`, `src/main.ts`, `package.json`, `tsconfig.json`, `AGENTS.md`
+- **Shared base (change only after telling the team)**: `src/core/contracts.ts`, `src/core/world/`, `src/game/`, `src/dev/`, `src/main.ts`, `package.json`, `tsconfig.json`, `AGENTS.md`
 - **Front A - World, scenes and player**: `src/render/SceneManager.ts`, `src/render/world/`, `src/render/player/`, `public/assets/props/`, `public/maps/map_street.json`, `scripts/generate-street-map.ts`
 - **Front B - Characters, weapon and audio**: `src/render/characters/`, `src/render/weapons/`, `src/render/AudioManager.ts`, `public/assets/characters/`, `public/assets/weapons/`, `public/assets/audio/`
 - **Front C - Gameplay and agents**: `src/core/agents/`, `src/core/gameplay/`, `tests/agents.test.ts`, `tests/combat.test.ts`
 - **Front D - Algorithms, X-ray, HUD and docs**: `src/core/graph/`, `src/core/algorithms/`, `src/benchmarks/`, `src/render/debug/`, `src/ui/`, `docs/`, `tests/algorithms.test.ts`, `public/maps/map_small.json`, `map_medium.json`, `map_large.json`
 
 Each contributor and agent must only modify files inside their assigned directories unless explicitly coordinated.
-`tests/fase0.test.ts` belongs to the integrator: if a change breaks it, talk to the integrator instead of editing the test.
+`tests/fase0.test.ts` protects the shared base: if a change breaks it, tell the team instead of editing the test.
 
 ## 2. Shared Contracts Governance
 
 - `src/core/contracts.ts` is the shared interface boundary across all roles. Do NOT modify it without prior coordination.
 - `src/game/GameLoop.ts` (`SimulationSource`, `FrameState`) and `src/game/views.ts` (`AgentView`, `DebugView`) are the contracts between `main.ts` and each render front. Replace implementations freely, keep these shapes.
-- Need a new field? Ask the integrator and, meanwhile, fake it in `src/dev/mockSnapshot.ts`.
+- Need a new field? Tell the team before adding it and, meanwhile, fake it in `src/dev/mockSnapshot.ts`.
 
 ## 3. Strict Decoupling Rule (Headless Core)
 
