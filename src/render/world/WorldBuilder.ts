@@ -1,19 +1,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { CellType, GridCoord, MapDefinition } from '../../core/contracts.ts';
-import { getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
+import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
+import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
-/**
- * Phase 0 world: places the map's GLB exactly where the grid generator measured it
- * (map.world.asset) or, when a map has no asset, raises simple blocks from the grid.
- * Front A (world) owns this file: zone lighting, scene presets, props, performance.
- */
+import { landmark, streetLamp } from './props.ts';
 
-const ZONE_LIGHTS: Partial<Record<CellType, { color: number; intensity: number }>> = {
-  pharmacy: { color: 0x4dff9a, intensity: 14 },
-  refuge: { color: 0xffb066, intensity: 16 },
-  extraction: { color: 0xff3b3b, intensity: 18 },
-};
+const sides = [{ row: -1, col: 0 }, { row: 1, col: 0 }, { row: 0, col: -1 }, { row: 0, col: 1 }];
+type Edge = { cell: GridCoord; side: GridCoord };
+const distanceSq = (a: GridCoord, b: GridCoord) => (a.row - b.row) ** 2 + (a.col - b.col) ** 2;
 
 export class WorldBuilder {
   readonly root = new THREE.Group();
@@ -36,7 +30,7 @@ export class WorldBuilder {
     } else {
       this.buildBlocks(map);
     }
-    this.addZoneLights(map);
+    this.addStreetFixtures(map);
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
@@ -59,7 +53,7 @@ export class WorldBuilder {
     const gltf = await new GLTFLoader().loadAsync(asset.url);
     const model = gltf.scene;
     model.position.set(asset.offset[0], asset.offset[1], asset.offset[2]);
-    if (asset.scale) model.scale.setScalar(asset.scale);
+    model.scale.setScalar(asset.scale ?? 1);
     model.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;
@@ -109,17 +103,49 @@ export class WorldBuilder {
     }
   }
 
-  private addZoneLights(map: MapDefinition): void {
-    const placed = new Set<CellType>();
+  private addStreetFixtures(map: MapDefinition): void {
+    const walkable = createWalkableLookup(map);
+    const edges: Edge[] = [];
     for (const cell of map.cells) {
-      const zone = ZONE_LIGHTS[cell.type];
-      if (!zone || placed.has(cell.type)) continue;
-      placed.add(cell.type);
-      const p = gridToWorld(cell, map);
-      const light = new THREE.PointLight(zone.color, zone.intensity, 12 * map.cellSize, 1.6);
-      light.position.set(p.x, 3, p.z);
-      light.name = `zone-light-${cell.type}`;
-      this.root.add(light);
+      if (!cell.walkable) continue;
+      const side = sides.find(d => !walkable({ row: cell.row + d.row, col: cell.col + d.col }));
+      if (side) edges.push({ cell, side });
+    }
+    if (!edges.length) return;
+
+    const mount = (model: THREE.Group, { cell, side }: Edge, inset: number) => {
+      const center = gridToWorld(cell, map);
+      const offset = map.cellSize / 2 - inset;
+      model.position.set(center.x + side.col * offset, 0, center.z + side.row * offset);
+      model.rotation.y = Math.atan2(-side.col, -side.row);
+      this.root.add(model);
+      this.collidables.push(model);
+    };
+
+    const reserved: GridCoord[] = [];
+    for (const kind of ['pharmacy', 'refuge', 'extraction'] as const) {
+      const cell = kind === 'extraction' ? map.extractionPoint : map.cells.find(c => c.type === kind);
+      if (!cell) continue;
+      const edge = edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
+      const model = landmark(kind);
+      model.scale.x = Math.min(1, map.cellSize / 1.75);
+      mount(model, edge, 0.09);
+      if (kind === 'extraction') {
+        const ring = model.getObjectByName('extraction-ring')!;
+        const center = gridToWorld(cell, map);
+        this.root.add(ring);
+        ring.position.set(center.x, 0.045, center.z);
+      }
+      reserved.push(edge.cell);
+    }
+
+    // Put each lamp in the widest remaining gap between light pools.
+    const sites = edges.map(edge => ({ edge, clearance: Math.min(...reserved.map(c => distanceSq(c, edge.cell))) }));
+    for (let i = 0; i < 10; i++) {
+      const site = sites.reduce((best, s) => s.clearance > best.clearance ? s : best);
+      if (site.clearance * map.cellSize ** 2 < 9) break;
+      mount(streetLamp(), site.edge, 0.06);
+      for (const s of sites) s.clearance = Math.min(s.clearance, distanceSq(s.edge.cell, site.edge.cell));
     }
   }
 

@@ -1,96 +1,124 @@
 import * as THREE from 'three';
-import type { MapDefinition } from '../../core/contracts.ts';
+import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import type { ExtendedWorldSnapshot } from '../../core/gameplay/SimulationEngine.ts';
 import { gridToWorld } from '../../core/world/gridSpace.ts';
+import { barricadeModel, decoyModel, pickupModel } from './props.ts';
 
-/**
- * Dynamic world objects driven by the snapshot: pickups, barricades and decoys.
- * Phase 0 uses simple shapes; front A replaces them with props (keep the update signature).
- */
+function night(sky: number, density: number, upper: number, ground: number, moon: number, fill: number, key: number) {
+  return { sky: new THREE.Color(sky), density, upper: new THREE.Color(upper), ground: new THREE.Color(ground),
+    moon: new THREE.Color(moon), fill, key };
+}
 
-const PICKUP_COLORS = { medicine: 0x4ade80, fuel: 0xf59e0b, battery: 0x60a5fa } as const;
+const nights = {
+  1: night(0x17253a, 0.014, 0xb0cbef, 0x505967, 0xc6deff, 1.22, 1.55),
+  2: night(0x112936, 0.017, 0x9acbdb, 0x405460, 0xaadbec, 1.18, 1.45),
+  3: night(0x302627, 0.019, 0xccc1ba, 0x624c42, 0xffc69b, 1.10, 1.35),
+  4: night(0x10192c, 0.016, 0x96afcf, 0x49404a, 0xb6c6f1, 1.02, 1.30),
+  5: night(0x1a2333, 0.013, 0xb4c2df, 0x4a5062, 0xd3e6ff, 1.28, 1.65),
+};
+const closed = new THREE.Color(0xff3b3b);
+const open = new THREE.Color(0x22c55e);
+const radioBlue = new THREE.Color(0x65bfff);
+const radioAmber = new THREE.Color(0xffa64d);
+type Indicator = THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
 
 export class WorldStateView {
   private readonly group = new THREE.Group();
-  private readonly pickups = new Map<string, THREE.Mesh>();
-  private readonly barricades = new Map<string, THREE.Mesh>();
-  private readonly decoys = new Map<string, THREE.Mesh>();
-  private readonly barricadeGeometry: THREE.BoxGeometry;
-  private readonly barricadeMaterial = new THREE.MeshStandardMaterial({ color: 0x7c4a21, roughness: 0.9 });
+  private readonly pickups = new Map<string, THREE.Group>();
+  private readonly barricades = new Map<string, THREE.Group>();
+  private readonly decoys = new Map<string, THREE.Group>();
+  private readonly pickupTemplates = { medicine: pickupModel('medicine'), fuel: pickupModel('fuel'), battery: pickupModel('battery') };
+  private readonly decoyTemplate = decoyModel();
+  private readonly barricadeTemplate: THREE.Group;
+  private readonly hemisphere?: THREE.HemisphereLight;
+  private readonly moon?: THREE.DirectionalLight;
+  private readonly beacon?: THREE.PointLight;
+  private readonly lens?: Indicator;
+  private readonly radio?: Indicator;
+  private previous?: ExtendedWorldSnapshot;
   private time = 0;
 
-  constructor(
-    scene: THREE.Scene,
-    private readonly map: MapDefinition
-  ) {
+  constructor(private readonly scene: THREE.Scene, private readonly map: MapDefinition) {
     this.group.name = 'world-state';
     scene.add(this.group);
-    this.barricadeGeometry = new THREE.BoxGeometry(map.cellSize * 0.95, 1.4, map.cellSize * 0.35);
+    this.barricadeTemplate = barricadeModel(map.cellSize);
+    this.hemisphere = scene.getObjectByName('scene-hemisphere-light') as THREE.HemisphereLight | undefined;
+    this.moon = scene.getObjectByName('scene-moon-light') as THREE.DirectionalLight | undefined;
+    this.beacon = scene.getObjectByName('zone-light-extraction') as THREE.PointLight | undefined;
+    this.lens = scene.getObjectByName('extraction-lens') as Indicator | undefined;
+    this.radio = scene.getObjectByName('radio-indicator') as Indicator | undefined;
   }
 
-  /** Barricade meshes also stop bullets. */
   getCollidables(): THREE.Object3D[] {
     return [...this.barricades.values()];
   }
 
   update(snapshot: ExtendedWorldSnapshot, dt: number): void {
     this.time += dt;
-
-    for (const pickup of snapshot.pickups) {
-      let mesh = this.pickups.get(pickup.id);
-      if (!mesh) {
-        mesh = new THREE.Mesh(
-          new THREE.OctahedronGeometry(0.25),
-          new THREE.MeshStandardMaterial({ color: PICKUP_COLORS[pickup.kind], emissive: PICKUP_COLORS[pickup.kind], emissiveIntensity: 1.4 })
-        );
-        const light = new THREE.PointLight(PICKUP_COLORS[pickup.kind], 3, 4, 2);
-        mesh.add(light);
-        this.group.add(mesh);
-        this.pickups.set(pickup.id, mesh);
-      }
-      const p = gridToWorld(pickup.position, this.map);
-      mesh.visible = !pickup.collected;
-      mesh.position.set(p.x, 0.9 + Math.sin(this.time * 2) * 0.1, p.z);
-      mesh.rotation.y = this.time;
+    if (this.previous !== snapshot) {
+      const pickups = snapshot.pickups.filter(p => !p.collected);
+      this.sync(this.pickups, pickups, p => p.id, p => p.position, p => this.pickupTemplates[p.kind]);
+      this.sync(this.barricades, snapshot.barricades, p => p.row + ',' + p.col, p => p, () => this.barricadeTemplate);
+      this.sync(this.decoys, snapshot.activeDecoys, d => d.id, d => d.position, () => this.decoyTemplate);
+      this.previous = snapshot;
+    }
+    for (const model of this.pickups.values()) {
+      model.position.y = 0.65 + 0.08 * Math.sin(this.time * 2 + model.position.x);
+      model.rotation.y = this.time * 0.7;
+    }
+    for (const model of this.decoys.values()) {
+      model.getObjectByName('sound-ring')!.scale.setScalar(0.35 + (this.time % 1) * 0.9);
     }
 
-    this.syncSet(this.barricades, snapshot.barricades.map((b) => `${b.row},${b.col}`), (key) => {
-      const [row, col] = key.split(',').map(Number);
-      const mesh = new THREE.Mesh(this.barricadeGeometry, this.barricadeMaterial);
-      const p = gridToWorld({ row, col }, this.map);
-      mesh.position.set(p.x, 0.7, p.z);
-      mesh.castShadow = true;
-      return mesh;
-    });
-
-    this.syncSet(this.decoys, snapshot.activeDecoys.map((d) => d.id), (id) => {
-      const decoy = snapshot.activeDecoys.find((d) => d.id === id)!;
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.15),
-        new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 2 })
-      );
-      const p = gridToWorld(decoy.position, this.map);
-      mesh.position.set(p.x, 0.15, p.z);
-      mesh.add(new THREE.PointLight(0xfacc15, 4, 5, 2));
-      return mesh;
-    });
-    for (const mesh of this.decoys.values()) mesh.scale.setScalar(1 + 0.3 * Math.sin(this.time * 12));
+    const target = nights[snapshot.sceneId];
+    const alpha = 1 - Math.exp(-dt * 2);
+    if (this.scene.background instanceof THREE.Color) this.scene.background.lerp(target.sky, alpha);
+    const fog = this.scene.fog;
+    if (fog instanceof THREE.FogExp2) {
+      fog.color.lerp(target.sky, alpha);
+      fog.density = THREE.MathUtils.lerp(fog.density, target.density, alpha);
+    }
+    if (this.hemisphere) {
+      this.hemisphere.color.lerp(target.upper, alpha);
+      this.hemisphere.groundColor.lerp(target.ground, alpha);
+      this.hemisphere.intensity = THREE.MathUtils.lerp(this.hemisphere.intensity, target.fill, alpha);
+    }
+    if (this.moon) {
+      this.moon.color.lerp(target.moon, alpha);
+      this.moon.intensity = THREE.MathUtils.lerp(this.moon.intensity, target.key, alpha);
+    }
+    if (this.beacon && this.lens) {
+      const active = snapshot.sceneId === 5 || snapshot.extractionOpen || snapshot.extractionTicksRemaining !== null;
+      this.beacon.color.lerp(active ? open : closed, alpha);
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 4);
+      this.lens.material.color.copy(this.beacon.color).multiplyScalar(0.85 + 0.6 * pulse);
+      this.beacon.intensity = 13 + 9 * pulse;
+    }
+    if (this.radio) {
+      const pulse = (1 + Math.cos(this.time * (snapshot.sceneId === 4 ? 5 : 2))) / 2;
+      this.radio.material.color.copy(radioBlue).lerp(radioAmber, pulse ** 6);
+    }
   }
 
-  private syncSet(map: Map<string, THREE.Mesh>, keys: string[], create: (key: string) => THREE.Mesh): void {
-    const wanted = new Set(keys);
-    for (const [key, mesh] of map) {
-      if (!wanted.has(key)) {
-        this.group.remove(mesh);
-        map.delete(key);
+  private sync<T>(models: Map<string, THREE.Group>, items: readonly T[], id: (item: T) => string,
+    position: (item: T) => GridCoord, template: (item: T) => THREE.Group): void {
+    const wanted = new Set<string>();
+    for (const item of items) {
+      const key = id(item);
+      wanted.add(key);
+      let model = models.get(key);
+      if (!model) {
+        model = template(item).clone();
+        models.set(key, model);
+        this.group.add(model);
       }
+      const p = gridToWorld(position(item), this.map);
+      model.position.set(p.x, 0, p.z);
     }
-    for (const key of wanted) {
-      if (!map.has(key)) {
-        const mesh = create(key);
-        this.group.add(mesh);
-        map.set(key, mesh);
-      }
+    for (const [key, model] of models) {
+      if (wanted.has(key)) continue;
+      this.group.remove(model);
+      models.delete(key);
     }
   }
 }

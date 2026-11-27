@@ -96,9 +96,11 @@ export class SceneManager {
 
     // Clear nocturnal ambience with moonlight and soft bounce
     const hemisphereLight = new THREE.HemisphereLight(0x789cd6, 0x243044, 0.95);
+    hemisphereLight.name = 'scene-hemisphere-light';
     this.scene.add(hemisphereLight);
 
     this.moonLight = new THREE.DirectionalLight(0xb5d0ff, 1.3);
+    this.moonLight.name = 'scene-moon-light';
     this.moonLight.position.set(24, 42, 18);
     this.moonLight.castShadow = true;
     this.moonLight.shadow.mapSize.set(2048, 2048);
