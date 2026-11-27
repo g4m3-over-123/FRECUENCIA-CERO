@@ -1,100 +1,147 @@
 :root {
   color-scheme: dark;
-  --bg-base: #070b12;
-  --panel-bg: rgba(13, 19, 31, 0.72);
-  --panel-border: rgba(148, 163, 184, 0.22);
-  --text-primary: #f1f5f9;
-  --text-muted: #94a3b8;
-  --accent: #38bdf8;
+  --surface: rgba(13, 18, 27, .94);
+  --raised: #192231;
+  --line: #303b4d;
+  --text: #eaf0f8;
+  --muted: #a5b1c3;
+  --accent: #a9e7ff;
+  --warning: #f0bf76;
+  --mono: 'IBM Plex Mono', Consolas, monospace;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
-html,
-body,
-#app {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background-color: var(--bg-base);
-  color: var(--text-primary);
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-
-#app {
-  position: relative;
-}
-
-.scene-viewport {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+#app { position: relative; }
+.scene-viewport { position: absolute; inset: 0; }
+.scene-viewport canvas { display: block; }
 
 .hud-overlay {
   position: absolute;
-  top: 16px;
-  left: 16px;
   z-index: 10;
+  inset: 16px 16px auto auto;
+  max-width: calc(100% - 32px);
   pointer-events: none;
 }
 
 .monitor-panel {
-  width: 320px;
-  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  width: min(368px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
+  background: var(--surface);
   backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 18px 42px #0008;
   pointer-events: auto;
 }
 
-.monitor-header {
+.monitor-panel :is(h1, h2, p, dl, dd, ul) { margin: 0; }
+.monitor-header, .monitor-section-title, .monitor-health, .monitor-dialog-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--panel-border);
+  gap: 12px;
 }
 
-.monitor-title {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--text-primary);
+.monitor-header { padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.monitor-kicker { color: var(--accent); font: 700 .68rem/1.2 var(--mono); letter-spacing: .12em; }
+.monitor-header h1 { font-size: 1.15rem; line-height: 1.25; }
+.monitor-content { overflow: auto; min-height: 0; overscroll-behavior: contain; }
+.monitor-section { display: grid; gap: 8px; border-bottom: 1px solid var(--line); padding: 13px 16px; }
+.monitor-section:last-child { border-bottom: 0; }
+.monitor-section h2 { font-size: .9rem; font-weight: 675; }
+.monitor-meta { color: var(--muted); font: .71rem/1.35 var(--mono); overflow-wrap: anywhere; }
+.monitor-status { color: var(--warning); font: .68rem/1.3 var(--mono); text-align: right; }
+.monitor-scene { font-size: 1.03rem; font-weight: 700; }
+.monitor-objective { color: var(--muted); font-size: .82rem; }
+.monitor-health { font-size: .75rem; }
+.monitor-health span { min-width: 56px; text-align: right; font-family: var(--mono); }
+.monitor-health progress { flex: 1; min-width: 0; height: .58rem; accent-color: var(--accent); }
+.monitor-inventory { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.monitor-inventory > div { padding: 4px 7px; background: var(--raised); border-radius: 5px; }
+.monitor-inventory dt { color: var(--muted); font-size: .68rem; overflow-wrap: anywhere; }
+.monitor-inventory dd { font: .76rem/1.45 var(--mono); }
+
+.monitor-panel button, .monitor-panel select {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: .74rem;
 }
 
-.monitor-badge {
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 999px;
-  color: var(--accent);
-  background: rgba(56, 189, 248, 0.14);
-  border: 1px solid rgba(56, 189, 248, 0.35);
-}
+.monitor-panel select { width: 100%; padding: 4px 9px; }
+.monitor-panel button { padding: 4px 8px; cursor: pointer; }
+.monitor-panel .monitor-small { min-height: 30px; }
+.monitor-panel :is(button, select, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.monitor-panel button:hover:enabled { border-color: var(--accent); }
+.monitor-panel button[aria-pressed='true'] { background: #203a4b; border-color: #76b3cc; }
+.monitor-panel :is(button, select):disabled { opacity: .58; cursor: default; }
+.monitor-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 
-.monitor-meta {
+.monitor-map-frame {
   display: grid;
-  gap: 6px;
-  font-size: 0.84rem;
-  color: var(--text-muted);
+  place-items: center;
+  min-height: 144px;
+  background: #0d131e;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
 }
 
-.monitor-row {
-  display: flex;
-  justify-content: space-between;
+.monitor-map { display: block; width: min(100%, 156px); height: auto; image-rendering: pixelated; }
+.monitor-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; padding: 0; list-style: none; color: var(--muted); font-size: .71rem; }
+.monitor-legend li::before { content: ''; display: inline-block; width: .5em; height: .5em; margin-right: 5px; vertical-align: .13em; background: var(--key-color); }
+.monitor-legend .spawn { --key-color: #a9e7ff; }
+.monitor-legend .pharmacy { --key-color: #80d6a5; }
+.monitor-legend .refuge { --key-color: #f0bf76; }
+.monitor-legend .extraction { --key-color: #f3948c; }
+
+.monitor-data { display: grid; grid-template-columns: 1fr minmax(0, 1.12fr); gap: 5px 8px; font-size: .75rem; }
+.monitor-data dt { color: var(--muted); }
+.monitor-data dd { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.monitor-route { font-size: .75rem; }
+.monitor-route summary { cursor: pointer; }
+.monitor-route p { max-height: 7rem; overflow: auto; color: var(--accent); font: .71rem/1.4 var(--mono); }
+.monitor-table { width: 100%; border-collapse: collapse; font: .72rem/1.3 var(--mono); }
+.monitor-table :is(td, th) { padding: 5px 3px; border-bottom: 1px solid var(--line); text-align: right; }
+.monitor-table th:first-child { text-align: left; }
+.monitor-table thead { color: var(--muted); }
+.monitor-log { display: grid; gap: 6px; list-style: none; padding: 0; }
+.monitor-log li { border-left: 2px solid var(--line); padding-left: 7px; font-size: .76rem; overflow-wrap: anywhere; }
+.monitor-log strong { display: block; color: var(--accent); font: .68rem/1.3 var(--mono); }
+
+.monitor-dialog {
+  width: min(calc(100% - 28px), 470px);
+  margin: auto;
+  padding: clamp(22px, 5vw, 36px);
+  border: 1px solid #596880;
+  border-top: 3px solid var(--accent);
+  border-radius: 14px;
+  color: var(--text);
+  background: #121a26;
+  box-shadow: 0 30px 90px #0009;
 }
 
-.monitor-value {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
+.monitor-dialog::backdrop { background: #070b14bc; backdrop-filter: blur(5px); }
+.monitor-dialog h2 { margin: 9px 0; font-size: clamp(1.75rem, 7vw, 2.75rem); line-height: 1.05; }
+.monitor-dialog > p:not(.monitor-kicker) { color: var(--muted); }
+.monitor-dialog-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 20px; }
+.monitor-dialog-actions button { padding: 8px 14px; }
+.monitor-dialog-actions button:first-child { background: var(--accent); border-color: var(--accent); color: #102233; font-weight: 700; }
+.monitor-dialog-actions button:first-child:hover { background: #d2f3ff; }
+.monitor-sr-only { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+
+@media (max-width: 600px) {
+  .hud-overlay { inset: auto 8px 8px; max-width: none; }
+  .monitor-panel { width: 100%; max-height: 54dvh; }
+  .monitor-map { width: min(100%, 132px); }
 }
