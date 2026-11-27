@@ -1,0 +1,106 @@
+{
+  "startedAt": "2026-11-27T04:25:49.538Z",
+  "finishedAt": "2026-11-27T04:25:50.450Z",
+  "options": {
+    "sizes": [
+      20,
+      32,
+      50
+    ],
+    "repetitions": 5,
+    "innerRuns": 15,
+    "baseSeed": 2026,
+    "quiet": false
+  },
+  "seeds": [
+    {
+      "size": 20,
+      "rep": 0,
+      "seed": 22026
+    },
+    {
+      "size": 20,
+      "rep": 1,
+      "seed": 22027
+    },
+    {
+      "size": 20,
+      "rep": 2,
+      "seed": 22028
+    },
+    {
+      "size": 20,
+      "rep": 3,
+      "seed": 22029
+    },
+    {
+      "size": 20,
+      "rep": 4,
+      "seed": 22030
+    },
+    {
+      "size": 32,
+      "rep": 0,
+      "seed": 34026
+    },
+    {
+      "size": 32,
+      "rep": 1,
+      "seed": 34027
+    },
+    {
+      "size": 32,
+      "rep": 2,
+      "seed": 34028
+    },
+    {
+      "size": 32,
+      "rep": 3,
+      "seed": 34029
+    },
+    {
+      "size": 32,
+      "rep": 4,
+      "seed": 34030
+    },
+    {
+      "size": 50,
+      "rep": 0,
+      "seed": 52026
+    },
+    {
+      "size": 50,
+      "rep": 1,
+      "seed": 52027
+    },
+    {
+      "size": 50,
+      "rep": 2,
+      "seed": 52028
+    },
+    {
+      "size": 50,
+      "rep": 3,
+      "seed": 52029
+    },
+    {
+      "size": 50,
+      "rep": 4,
+      "seed": 52030
+    }
+  ],
+  "machine": {
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12400F",
+    "cores": 12,
+    "totalMemoryGb": 15.46,
+    "platform": "linux",
+    "release": "6.18.58-1-lts",
+    "arch": "x64",
+    "node": "v24.22.0"
+  },
+  "rows": {
+    "results": 354,
+    "summary": 36,
+    "alerts": 75
+  }
+}

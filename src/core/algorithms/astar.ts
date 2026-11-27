@@ -1,22 +1,19 @@
-import type { GridCoord, HeuristicType, SearchResult } from '../contracts.ts';
+import type { GridCoord, HeuristicType } from '../contracts.ts';
 import type { WeightedGraph } from '../graph/WeightedGraph.ts';
+import { createHeuristic } from './heuristics.ts';
+import { bestFirstSearch, type SearchStats } from './shortestPath.ts';
 
 /**
- * Heuristic shortest path search using A*.
+ * Heuristic shortest path search using A*, f(n) = g(n) + h(n).
+ * h is scaled by the graph's minimum cell cost, so octile (8-way) and manhattan (4-way)
+ * are admissible and consistent, and the returned path is optimal.
+ * Worst case time O((V + E) log V), same as Dijkstra; usually far fewer expansions.
  */
 export function runAStar(
-  _graph: WeightedGraph,
-  _start: GridCoord,
-  _goal: GridCoord,
-  _heuristic: HeuristicType = 'octile'
-): SearchResult {
-  // TODO: Implement A* using BinaryHeap and configurable heuristic.
-  return {
-    found: false,
-    path: [],
-    totalCost: 0,
-    expandedNodes: [],
-    expandedCount: 0,
-    executionTimeMs: 0,
-  };
+  graph: WeightedGraph,
+  start: GridCoord,
+  goal: GridCoord,
+  heuristic: HeuristicType = 'octile'
+): SearchStats {
+  return bestFirstSearch(graph, start, goal, createHeuristic(heuristic, graph.minCellCost));
 }
