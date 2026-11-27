@@ -3,7 +3,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
-import { landmark, streetLamp } from './props.ts';
+import { landmark, streetLamps } from './props.ts';
+
+function freezeTransform(obj: THREE.Object3D): void {
+  obj.updateMatrix();
+  obj.matrixAutoUpdate = false;
+}
 
 const sides = [{ row: -1, col: 0 }, { row: 1, col: 0 }, { row: 0, col: -1 }, { row: 0, col: 1 }];
 type Edge = { cell: GridCoord; side: GridCoord };
@@ -56,9 +61,10 @@ export class WorldBuilder {
     model.scale.setScalar(asset.scale ?? 1);
     model.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
-        obj.castShadow = true;
+        obj.castShadow = !/^Plane\.?(002|009|01[0-5])(?:_|$)/i.test(obj.name);
         obj.receiveShadow = true;
       }
+      freezeTransform(obj);
     });
     this.root.add(model);
     this.collidables.push(model);
@@ -113,13 +119,12 @@ export class WorldBuilder {
     }
     if (!edges.length) return;
 
-    const mount = (model: THREE.Group, { cell, side }: Edge, inset: number) => {
+    const place = (model: THREE.Object3D, { cell, side }: Edge, inset: number) => {
       const center = gridToWorld(cell, map);
       const offset = map.cellSize / 2 - inset;
       model.position.set(center.x + side.col * offset, 0, center.z + side.row * offset);
       model.rotation.y = Math.atan2(-side.col, -side.row);
-      this.root.add(model);
-      this.collidables.push(model);
+      model.updateMatrix();
     };
 
     const reserved: GridCoord[] = [];
@@ -128,24 +133,37 @@ export class WorldBuilder {
       if (!cell) continue;
       const edge = edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
       const model = landmark(kind);
-      model.scale.x = Math.min(1, map.cellSize / 1.75);
-      mount(model, edge, 0.09);
+      place(model, edge, 0.09);
+      this.root.add(model);
+      this.collidables.push(model);
       if (kind === 'extraction') {
         const ring = model.getObjectByName('extraction-ring')!;
         const center = gridToWorld(cell, map);
         this.root.add(ring);
         ring.position.set(center.x, 0.045, center.z);
       }
+      model.traverse(obj => {
+        if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
+      });
       reserved.push(edge.cell);
     }
 
     // Put each lamp in the widest remaining gap between light pools.
     const sites = edges.map(edge => ({ edge, clearance: Math.min(...reserved.map(c => distanceSq(c, edge.cell))) }));
-    for (let i = 0; i < 10; i++) {
+    const mounts: THREE.Matrix4[] = [];
+    const placement = new THREE.Object3D();
+    for (let i = 0; i < 6; i++) {
       const site = sites.reduce((best, s) => s.clearance > best.clearance ? s : best);
       if (site.clearance * map.cellSize ** 2 < 9) break;
-      mount(streetLamp(), site.edge, 0.06);
+      place(placement, site.edge, 0.06);
+      mounts.push(placement.matrix.clone());
       for (const s of sites) s.clearance = Math.min(s.clearance, distanceSq(s.edge.cell, site.edge.cell));
+    }
+    if (mounts.length) {
+      const lamps = streetLamps(mounts);
+      lamps.traverse(freezeTransform);
+      this.root.add(lamps);
+      this.collidables.push(lamps);
     }
   }
 

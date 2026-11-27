@@ -77,15 +77,25 @@ export function decoyModel() {
   return group;
 }
 
-export function streetLamp() {
+export function streetLamps(mounts: THREE.Matrix4[]) {
   const group = new THREE.Group();
-  part(group, dark, 0, 1.8, 0, 0.085, 3.6, 0.085, drum);
-  part(group, steel, 0, 3.56, 0.23, 0.07, 0.09, 0.5);
-  part(group, dark, 0, 3.51, 0.49, 0.32, 0.13, 0.38);
-  part(group, amber, 0, 3.42, 0.49, 0.28, 0.07, 0.32);
-  const light = new THREE.PointLight(0xffbd79, 19, 15, 1.65);
-  light.position.set(0, 3.34, 0.49);
-  group.add(light);
+  const addPart = (geometry: THREE.BufferGeometry, material: THREE.Material, y: number, z: number,
+    width: number, height: number, depth: number) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, mounts.length);
+    const local = new THREE.Matrix4().makeScale(width, height, depth).setPosition(0, y, z);
+    const matrix = new THREE.Matrix4();
+    mounts.forEach((mount, i) => mesh.setMatrixAt(i, matrix.multiplyMatrices(mount, local)));
+    group.add(mesh);
+  };
+  addPart(drum, dark, 1.8, 0, 0.085, 3.6, 0.085);
+  addPart(cube, steel, 3.56, 0.23, 0.07, 0.09, 0.5);
+  addPart(cube, dark, 3.51, 0.49, 0.32, 0.13, 0.38);
+  addPart(cube, amber, 3.42, 0.49, 0.28, 0.07, 0.32);
+  for (const mount of mounts) {
+    const light = new THREE.PointLight(0xffbd79, 22, 22, 1.45);
+    light.position.set(0, 3.34, 0.49).applyMatrix4(mount);
+    group.add(light);
+  }
   return group;
 }
 
@@ -98,8 +108,8 @@ export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
   group.add(light);
   if (kind === 'pharmacy') {
     light.color.setHex(0x63ffbc);
-    part(group, dark, 0, 1.14, 0, 1.7, 2.28, 0.11);
-    for (let i = 0; i < 14; i++) part(group, steel, 0, 0.12 + i * 0.145, 0.075, 1.5, 0.12, 0.045);
+    part(group, steel, 0, 1.14, 0, 1.0, 2.28, 0.11);
+    for (const y of [0.24, 0.81, 1.38, 1.95]) part(group, dark, 0, y, 0.065, 0.98, 0.045, 0.035);
     part(group, dark, 0, 2.53, 0.02, 0.7, 0.7, 0.16);
     part(group, green, 0, 2.53, 0.12, 0.53, 0.16, 0.06);
     part(group, green, 0, 2.53, 0.12, 0.16, 0.53, 0.055);
@@ -111,7 +121,7 @@ export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
     part(group, steel, 0.31, 1.96, 0, 0.032, 1.85, 0.032, drum);
     part(group, glow(0x65bfff), 0.31, 2.92, 0, 0.085, 0.12, 0.085, drum).name = 'radio-indicator';
     for (let i = 0; i < 3; i++) {
-      part(group, canvas, -0.65, 0.12 + i * 0.17, 0, 0.46, 0.2, 0.32, drum).rotation.y = i;
+      part(group, canvas, -0.49, 0.12 + i * 0.17, 0, 0.28, 0.2, 0.26, drum).rotation.y = i;
     }
   } else {
     const lens = glow(0xff3b3b);

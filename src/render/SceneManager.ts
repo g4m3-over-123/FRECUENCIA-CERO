@@ -65,9 +65,9 @@ export class SceneManager {
     // Add camera to scene so child lights (flashlight) affect world geometry
     this.scene.add(this.camera);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.25;
@@ -82,7 +82,7 @@ export class SceneManager {
     this.flashlight.position.set(0.18, -0.15, -0.05);
     this.flashlight.visible = false;
     this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.set(1024, 1024);
+    this.flashlight.shadow.mapSize.set(512, 512);
     this.flashlight.shadow.camera.near = 0.25;
     this.flashlight.shadow.camera.far = 34;
     this.flashlight.shadow.bias = -0.0004;
@@ -103,14 +103,16 @@ export class SceneManager {
     this.moonLight.name = 'scene-moon-light';
     this.moonLight.position.set(24, 42, 18);
     this.moonLight.castShadow = true;
-    this.moonLight.shadow.mapSize.set(2048, 2048);
+    this.moonLight.shadow.autoUpdate = false;
+    this.moonLight.shadow.needsUpdate = true;
+    this.moonLight.shadow.mapSize.set(1024, 1024);
     this.moonLight.shadow.camera.near = 1;
-    this.moonLight.shadow.camera.far = 140;
-    const shadowHalfExtent = 48;
-    this.moonLight.shadow.camera.left = -shadowHalfExtent;
-    this.moonLight.shadow.camera.right = shadowHalfExtent;
-    this.moonLight.shadow.camera.top = shadowHalfExtent;
-    this.moonLight.shadow.camera.bottom = -shadowHalfExtent;
+    this.moonLight.shadow.camera.far = 115;
+    this.moonLight.shadow.camera.left = -38;
+    this.moonLight.shadow.camera.right = 38;
+    this.moonLight.shadow.camera.top = 28;
+    this.moonLight.shadow.camera.bottom = -28;
+    this.moonLight.shadow.camera.updateProjectionMatrix();
     this.moonLight.shadow.bias = -0.0005;
     this.moonLight.shadow.normalBias = 0.03;
     this.scene.add(this.moonLight);
@@ -141,6 +143,7 @@ export class SceneManager {
 
     this.clock.start();
 
+    let moonShadowAge = 0;
     const animate = () => {
       this.animationFrameId = window.requestAnimationFrame(animate);
       const dt = Math.min(this.clock.getDelta(), 0.1);
@@ -151,6 +154,12 @@ export class SceneManager {
         this.stepPreviewWalk(dt);
       }
 
+      // The fixed moon needs periodic refreshes only for moving shadow casters.
+      moonShadowAge += dt;
+      if (moonShadowAge >= 1 / 15) {
+        this.moonLight.shadow.needsUpdate = true;
+        moonShadowAge = 0;
+      }
       this.renderer.render(this.scene, this.camera);
     };
 

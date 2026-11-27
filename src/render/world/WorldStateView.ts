@@ -27,6 +27,9 @@ export class WorldStateView {
   private readonly pickups = new Map<string, THREE.Group>();
   private readonly barricades = new Map<string, THREE.Group>();
   private readonly decoys = new Map<string, THREE.Group>();
+  private readonly wanted = new Set<string>();
+  private readonly collidables: THREE.Object3D[] = [];
+  private readonly soundRings: THREE.Object3D[] = [];
   private readonly pickupTemplates = { medicine: pickupModel('medicine'), fuel: pickupModel('fuel'), battery: pickupModel('battery') };
   private readonly decoyTemplate = decoyModel();
   private readonly barricadeTemplate: THREE.Group;
@@ -50,7 +53,7 @@ export class WorldStateView {
   }
 
   getCollidables(): THREE.Object3D[] {
-    return [...this.barricades.values()];
+    return this.collidables;
   }
 
   update(snapshot: ExtendedWorldSnapshot, dt: number): void {
@@ -58,16 +61,22 @@ export class WorldStateView {
     if (this.previous !== snapshot) {
       const pickups = snapshot.pickups.filter(p => !p.collected);
       this.sync(this.pickups, pickups, p => p.id, p => p.position, p => this.pickupTemplates[p.kind]);
-      this.sync(this.barricades, snapshot.barricades, p => p.row + ',' + p.col, p => p, () => this.barricadeTemplate);
-      this.sync(this.decoys, snapshot.activeDecoys, d => d.id, d => d.position, () => this.decoyTemplate);
+      if (this.sync(this.barricades, snapshot.barricades, p => p.row + ',' + p.col, p => p, () => this.barricadeTemplate)) {
+        this.collidables.length = 0;
+        for (const model of this.barricades.values()) this.collidables.push(model);
+      }
+      if (this.sync(this.decoys, snapshot.activeDecoys, d => d.id, d => d.position, () => this.decoyTemplate)) {
+        this.soundRings.length = 0;
+        for (const model of this.decoys.values()) this.soundRings.push(model.getObjectByName('sound-ring')!);
+      }
       this.previous = snapshot;
     }
     for (const model of this.pickups.values()) {
       model.position.y = 0.65 + 0.08 * Math.sin(this.time * 2 + model.position.x);
       model.rotation.y = this.time * 0.7;
     }
-    for (const model of this.decoys.values()) {
-      model.getObjectByName('sound-ring')!.scale.setScalar(0.35 + (this.time % 1) * 0.9);
+    for (const ring of this.soundRings) {
+      ring.scale.setScalar(0.35 + (this.time % 1) * 0.9);
     }
 
     const target = nights[snapshot.sceneId];
@@ -89,9 +98,10 @@ export class WorldStateView {
     }
     if (this.beacon && this.lens) {
       const active = snapshot.sceneId === 5 || snapshot.extractionOpen || snapshot.extractionTicksRemaining !== null;
-      this.beacon.color.lerp(active ? open : closed, alpha);
+      this.beacon.color.copy(active ? open : closed);
       const pulse = 0.5 + 0.5 * Math.sin(this.time * 4);
-      this.lens.material.color.copy(this.beacon.color).multiplyScalar(0.85 + 0.6 * pulse);
+      // The lens and ground ring share this material.
+      this.lens.material.color.copy(this.beacon.color);
       this.beacon.intensity = 13 + 9 * pulse;
     }
     if (this.radio) {
@@ -101,13 +111,15 @@ export class WorldStateView {
   }
 
   private sync<T>(models: Map<string, THREE.Group>, items: readonly T[], id: (item: T) => string,
-    position: (item: T) => GridCoord, template: (item: T) => THREE.Group): void {
-    const wanted = new Set<string>();
+    position: (item: T) => GridCoord, template: (item: T) => THREE.Group): boolean {
+    let changed = false;
+    this.wanted.clear();
     for (const item of items) {
       const key = id(item);
-      wanted.add(key);
+      this.wanted.add(key);
       let model = models.get(key);
       if (!model) {
+        changed = true;
         model = template(item).clone();
         models.set(key, model);
         this.group.add(model);
@@ -116,9 +128,11 @@ export class WorldStateView {
       model.position.set(p.x, 0, p.z);
     }
     for (const [key, model] of models) {
-      if (wanted.has(key)) continue;
+      if (this.wanted.has(key)) continue;
+      changed = true;
       this.group.remove(model);
       models.delete(key);
     }
+    return changed;
   }
 }
