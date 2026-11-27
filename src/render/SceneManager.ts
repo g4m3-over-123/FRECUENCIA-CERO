@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 const NIGHT_SKY_COLOR = 0x0b1220;
 const FPV_FOG_DENSITY = 0.018;
@@ -10,6 +15,15 @@ const CROUCH_SMOOTH_SPEED = 10;
 const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
 const DEFAULT_STREET_ASSET_URL = '/assets/props/street.glb';
+/** Horizontal field of view kept on wide screens; a wider one stretches the screen edges. */
+const HORIZONTAL_FOV_DEG = 90;
+const VERTICAL_FOV_RANGE_DEG: [number, number] = [55, 72];
+/** Longest frame step; above it (tab switch, debugger) the game slows down instead of jumping. */
+const MAX_FRAME_DT = 0.25;
+/** WebGL running on the CPU: the browser has no hardware acceleration. */
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|software|microsoft basic render/i;
+
+export type GraphicsQuality = 'high' | 'low';
 
 export interface SceneManagerOptions {
   /**
@@ -48,6 +62,11 @@ export class SceneManager {
   private readonly onKeyUpBound: (event: KeyboardEvent) => void;
   private readonly onPointerLockChangeBound: () => void;
 
+  /** 'low' when the browser renders WebGL in software (see detectSoftwareRenderer). */
+  readonly quality: GraphicsQuality;
+  readonly rendererName: string;
+  private composer: EffectComposer | null = null;
+
   constructor(
     private readonly container: HTMLElement,
     options: SceneManagerOptions = {}
@@ -59,7 +78,7 @@ export class SceneManager {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
-    this.camera = new THREE.PerspectiveCamera(72, width / height, 0.1, 180);
+    this.camera = new THREE.PerspectiveCamera(fovForAspect(width / height), width / height, 0.1, 180);
     this.camera.position.set(0, EYE_HEIGHT_STANDING, 8);
     this.camera.lookAt(0, EYE_HEIGHT_STANDING - 0.1, 0);
     // Add camera to scene so child lights (flashlight) affect world geometry
@@ -74,6 +93,15 @@ export class SceneManager {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
+
+    this.rendererName = readRendererName(this.renderer);
+    this.quality = SOFTWARE_RENDERER.test(this.rendererName) ? 'low' : 'high';
+    if (this.quality === 'low') {
+      // Software WebGL manages a few frames per second at full quality.
+      this.renderer.setPixelRatio(0.4);
+      this.renderer.shadowMap.enabled = false;
+      this.showSoftwareRenderingWarning();
+    }
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
 
@@ -105,7 +133,8 @@ export class SceneManager {
     this.moonLight.castShadow = true;
     this.moonLight.shadow.autoUpdate = false;
     this.moonLight.shadow.needsUpdate = true;
-    this.moonLight.shadow.mapSize.set(1024, 1024);
+    const moonShadowSize = this.quality === 'high' ? 4096 : 1024;
+    this.moonLight.shadow.mapSize.set(moonShadowSize, moonShadowSize);
     this.moonLight.shadow.camera.near = 1;
     this.moonLight.shadow.camera.far = 115;
     this.moonLight.shadow.camera.left = -38;
@@ -118,6 +147,7 @@ export class SceneManager {
     this.scene.add(this.moonLight);
 
     this.setupBaseGround();
+    if (this.quality === 'high') this.setupPostProcessing(width, height);
 
     this.onResizeBound = this.handleResize.bind(this);
     this.onCanvasClickBound = this.handleCanvasClick.bind(this);
@@ -142,11 +172,13 @@ export class SceneManager {
     }
 
     this.clock.start();
+    this.sharpenTextures();
+    if (this.quality === 'low') this.dropPointLights();
 
     let moonShadowAge = 0;
     const animate = () => {
       this.animationFrameId = window.requestAnimationFrame(animate);
-      const dt = Math.min(this.clock.getDelta(), 0.1);
+      const dt = Math.min(this.clock.getDelta(), MAX_FRAME_DT);
 
       if (onUpdate) {
         onUpdate(dt);
@@ -160,7 +192,8 @@ export class SceneManager {
         this.moonLight.shadow.needsUpdate = true;
         moonShadowAge = 0;
       }
-      this.renderer.render(this.scene, this.camera);
+      if (this.composer) this.composer.render(dt);
+      else this.renderer.render(this.scene, this.camera);
     };
 
     animate();
@@ -256,6 +289,7 @@ export class SceneManager {
     }
 
     this.clearStreetPreview();
+    this.composer?.dispose();
     this.controls.dispose();
     window.removeEventListener('resize', this.onResizeBound);
     this.renderer.domElement.removeEventListener('click', this.onCanvasClickBound);
@@ -445,7 +479,83 @@ export class SceneManager {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
     this.camera.aspect = width / height;
+    this.camera.fov = fovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.composer?.setSize(width, height);
   }
+
+  /**
+   * Ambient occlusion darkens wall bases, corners and the ground under props; a light bloom
+   * lets lamps and glowing signs bleed into the fog. OutputPass applies tone mapping.
+   */
+  private setupPostProcessing(width: number, height: number): void {
+    const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, samples: 4 });
+    const composer = new EffectComposer(this.renderer, target);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const ao = new GTAOPass(this.scene, this.camera, width, height);
+    ao.updateGtaoMaterial({ radius: 0.7, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 16 });
+    ao.blendIntensity = 0.85;
+    composer.addPass(ao);
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.32, 0.5, 0.82));
+    composer.addPass(new OutputPass());
+    this.composer = composer;
+  }
+
+  /**
+   * Software WebGL shades every point light per pixel on the CPU; the lamps go and the
+   * ambient light rises so the street stays readable.
+   */
+  private dropPointLights(): void {
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.PointLight) obj.visible = false;
+      if (obj instanceof THREE.HemisphereLight) obj.intensity *= 1.8;
+    });
+  }
+
+  /** Full anisotropic filtering: ground and walls stay sharp at grazing angles. */
+  private sharpenTextures(): void {
+    const anisotropy = this.quality === 'high' ? this.renderer.capabilities.getMaxAnisotropy() : 1;
+    this.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture && value.anisotropy !== anisotropy) {
+            value.anisotropy = anisotropy;
+            value.needsUpdate = true;
+          }
+        }
+      }
+    });
+  }
+
+  private showSoftwareRenderingWarning(): void {
+    const note = document.createElement('div');
+    note.className = 'software-render-warning';
+    note.style.cssText =
+      'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:50;max-width:640px;' +
+      'padding:10px 14px;border-radius:8px;background:rgba(120,20,20,.92);color:#fff;' +
+      'font:13px/1.45 system-ui,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.4)';
+    note.innerHTML =
+      '<b>El navegador no usa la tarjeta grafica</b> (WebGL por software: ' + this.rendererName.replace(/[<>&]/g, '') + '). ' +
+      'El juego ira muy lento. En Chrome abre <code>chrome://settings/system</code> y activa la aceleracion por hardware; ' +
+      'si sigue igual, en <code>chrome://flags/#use-angle</code> elige <b>OpenGL</b> y reinicia. ' +
+      'Comprueba el resultado en <code>chrome://gpu</code>. ' +
+      '<button style="margin-left:6px;cursor:pointer">Cerrar</button>';
+    note.querySelector('button')!.addEventListener('click', () => note.remove());
+    document.body.appendChild(note);
+    console.warn(`[SceneManager] Software WebGL renderer: ${this.rendererName}. Low quality mode.`);
+  }
+}
+
+function fovForAspect(aspect: number): number {
+  const half = THREE.MathUtils.degToRad(HORIZONTAL_FOV_DEG / 2);
+  const vertical = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(half) / aspect));
+  return THREE.MathUtils.clamp(vertical, VERTICAL_FOV_RANGE_DEG[0], VERTICAL_FOV_RANGE_DEG[1]);
+}
+
+function readRendererName(renderer: THREE.WebGLRenderer): string {
+  const gl = renderer.getContext();
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  return String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
 }
