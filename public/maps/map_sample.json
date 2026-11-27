@@ -1,0 +1,741 @@
+{
+  "id": "map_sample",
+  "name": "Sample Quarantine Block 10x10",
+  "width": 10,
+  "height": 10,
+  "cellSize": 2,
+  "spawnMara": {
+    "row": 0,
+    "col": 0
+  },
+  "extractionPoint": {
+    "row": 0,
+    "col": 9
+  },
+  "cells": [
+    {
+      "row": 0,
+      "col": 0,
+      "type": "refuge",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 0,
+      "col": 1,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 0,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 0,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 0,
+      "col": 4,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 0,
+      "col": 5,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 0,
+      "col": 6,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 0,
+      "col": 7,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 0,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 0,
+      "col": 9,
+      "type": "extraction",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 1,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 1,
+      "col": 3,
+      "type": "obstacle",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 1.5
+    },
+    {
+      "row": 1,
+      "col": 4,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 1,
+      "col": 5,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 1,
+      "col": 6,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 1,
+      "col": 7,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 1,
+      "col": 8,
+      "type": "barricade",
+      "walkable": true,
+      "cost": 3.5,
+      "elevation": 0.8
+    },
+    {
+      "row": 1,
+      "col": 9,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 2,
+      "col": 0,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 4,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 7,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 2,
+      "col": 9,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 3,
+      "col": 1,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 3,
+      "col": 2,
+      "type": "barricade",
+      "walkable": true,
+      "cost": 3.5,
+      "elevation": 0.8
+    },
+    {
+      "row": 3,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 3,
+      "col": 4,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 3,
+      "col": 5,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 3,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 3,
+      "col": 7,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 3,
+      "col": 8,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 3,
+      "col": 9,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 0,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 4,
+      "col": 1,
+      "type": "pharmacy",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 2,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 4,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 4,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 4,
+      "col": 7,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 4,
+      "col": 8,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 4,
+      "col": 9,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 5,
+      "col": 0,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 5,
+      "col": 1,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 5,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 5,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 5,
+      "col": 4,
+      "type": "obstacle",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 1.5
+    },
+    {
+      "row": 5,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 5,
+      "col": 6,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 5,
+      "col": 7,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 5,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 5,
+      "col": 9,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 0,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 1,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 3,
+      "type": "barricade",
+      "walkable": true,
+      "cost": 3.5,
+      "elevation": 0.8
+    },
+    {
+      "row": 6,
+      "col": 4,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 7,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 6,
+      "col": 9,
+      "type": "obstacle",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 1.5
+    },
+    {
+      "row": 7,
+      "col": 0,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 7,
+      "col": 1,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 7,
+      "col": 2,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 7,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 7,
+      "col": 4,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 7,
+      "col": 5,
+      "type": "pharmacy",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 7,
+      "col": 6,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 7,
+      "col": 7,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 7,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 7,
+      "col": 9,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 0,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 1,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 8,
+      "col": 2,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 8,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 4,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 8,
+      "col": 7,
+      "type": "building",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 6
+    },
+    {
+      "row": 8,
+      "col": 8,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 8,
+      "col": 9,
+      "type": "sidewalk",
+      "walkable": true,
+      "cost": 1.2
+    },
+    {
+      "row": 9,
+      "col": 0,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 1,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 2,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 3,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 4,
+      "type": "obstacle",
+      "walkable": false,
+      "cost": 999,
+      "elevation": 1.5
+    },
+    {
+      "row": 9,
+      "col": 5,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 6,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 7,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 8,
+      "type": "street",
+      "walkable": true,
+      "cost": 1
+    },
+    {
+      "row": 9,
+      "col": 9,
+      "type": "refuge",
+      "walkable": true,
+      "cost": 1
+    }
+  ]
+}
