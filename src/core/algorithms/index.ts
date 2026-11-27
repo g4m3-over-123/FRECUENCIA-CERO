@@ -9,6 +9,8 @@ export { runDijkstra } from './dijkstra.ts';
 export { runAStar } from './astar.ts';
 export { createHeuristic, isHeuristicAdmissible } from './heuristics.ts';
 export { propagateAlertRecursive } from './alertRecursion.ts';
+export { PathCache, isPathStillValid } from './pathCache.ts';
+export type { CachedSearchStats, PathCacheStats } from './pathCache.ts';
 export type { SearchStats } from './shortestPath.ts';
 export type { AlertPropagationOptions } from './alertRecursion.ts';
 
