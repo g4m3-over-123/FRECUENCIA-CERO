@@ -60,17 +60,17 @@ describe('Combat on the 1 m street grid', () => {
   it('emits scaled footsteps and sprint noise through moveToCell', () => {
     const engine = streetEngine();
     expect(street.cellSize).toBe(1);
-    expect(move(engine, cell(46, 34), 'walk').soundEvents).toContainEqual(
+    expect(move(engine, cell(10, 6), 'walk').soundEvents).toContainEqual(
       expect.objectContaining({ sourceId: 'mara_step', radius: 5 })
     );
-    expect(move(engine, cell(45, 35), 'sprint').soundEvents).toContainEqual(
+    expect(move(engine, cell(11, 7), 'sprint').soundEvents).toContainEqual(
       expect.objectContaining({ sourceId: 'mara_sprint', radius: 12 })
     );
   });
 
   it('detects Mara at explorer range and relays evidence beyond the coarse-grid alert radius', () => {
-    const scout = spawn('scout', cell(40, 37));
-    const receiver = spawn('receiver', cell(30, 34), 'pursuer');
+    const scout = spawn('scout', cell(10, 13));
+    const receiver = spawn('receiver', cell(10, 24), 'pursuer');
     const engine = streetEngine([scout, receiver]);
     expect(gridDistance(scout.position, street.spawnMara)).toBeGreaterThan(5);
     expect(gridDistance(scout.position, receiver.position)).toBeGreaterThan(7);
@@ -90,8 +90,8 @@ describe('Combat on the 1 m street grid', () => {
   });
 
   it('gives pursuers a longer line of sight than explorers on the street grid', () => {
-    const observer = cell(26, 34);
-    const target = cell(22, 24);
+    const observer = cell(17, 33);
+    const target = cell(17, 43);
     const engine = streetEngine([spawn('scout', observer), spawn('pursuer', observer, 'pursuer')]);
     const [scout, pursuer] = move(engine, target).agents;
     expect(scout.memory).toBeNull();
@@ -120,9 +120,9 @@ describe('Combat on the 1 m street grid', () => {
 
   it('excludes dead infected as alert recipients, relays and origins', () => {
     const engine = streetEngine([
-      spawn('origin', cell(30, 34)),
-      spawn('bridge', cell(35, 35)),
-      spawn('distant', cell(40, 37)),
+      spawn('origin', cell(10, 13)),
+      spawn('bridge', cell(10, 19)),
+      spawn('distant', cell(10, 25)),
     ]);
     const { agents } = engine.getSnapshot();
     const options = { maxRadius: 7 };
@@ -250,18 +250,19 @@ describe('Street scene progression', () => {
 
 describe('Street agent acceptance', () => {
   it('keeps Mara hidden behind a building and redirects the patrol to an acoustic decoy', () => {
-    const hidden = cell(36, 18);
-    const zombie = { ...spawn('zombie', cell(28, 18)), patrolWaypoints: [cell(26, 18)] };
+    const hidden = cell(26, 30);
+    const zombie = { ...spawn('zombie', cell(26, 38)), patrolWaypoints: [cell(26, 40)] };
     const engine = streetEngine([zombie]);
-    expect(street.cells).toContainEqual(expect.objectContaining({ row: 35, col: 18, type: 'building' }));
+    // The block at rows 23-29, cols 32-36 sits between Mara and the patrol.
     expect(gridDistance(zombie.position, hidden)).toBeLessThan(9);
+    expect(hasLineOfSight(engine.getGraph(), zombie.position, hidden, 9, buildOpaqueCellSet(street))).toBe(false);
     const silent = move(engine, hidden);
     expect(silent.soundEvents).toEqual([]);
     expect(silent.agents[0]).toMatchObject({
-      state: 'patrol', memory: null, targetPosition: cell(26, 18),
+      state: 'patrol', memory: null, targetPosition: cell(26, 40),
     });
 
-    const target = cell(34, 21);
+    const target = cell(23, 30);
     expect(engine.triggerDecoy(target)).toMatchObject({ position: target, radius: 18 });
     const lured = engine.step(tickMs).agents[0];
     expect(lured).toMatchObject({
@@ -272,8 +273,8 @@ describe('Street agent acceptance', () => {
   });
 
   it('keeps a threat behind opaque cells out of the radio survivor\'s visual memory', () => {
-    const refuge = cell(44, 35);
-    const threat = cell(38, 32); // behind the building block west of the refuge
+    const refuge = cell(30, 31);
+    const threat = cell(26, 38); // behind the block north-east of the refuge
     const engine = streetEngine([
       spawn('radio', refuge, 'radio_survivor'),
       spawn('zombie', threat),
@@ -286,13 +287,13 @@ describe('Street agent acceptance', () => {
   it.each([
     {
       label: 'choke cell',
-      mara: cell(34, 19), zombie: cell(38, 18), target: cell(33, 19),
-      blocked: cell(35, 19), onPath: true,
+      mara: cell(6, 22), zombie: cell(8, 26), target: cell(6, 21),
+      blocked: cell(6, 23), onPath: true,
     },
     {
       label: 'diagonal corner',
-      mara: cell(46, 34), zombie: cell(47, 37), target: cell(44, 34),
-      blocked: cell(46, 35), onPath: false,
+      mara: cell(6, 14), zombie: cell(7, 17), target: cell(6, 12),
+      blocked: cell(6, 13), onPath: false,
     },
   ])('replans over an alternate route after a barricade blocks a $label', ({
     mara, zombie, target, blocked, onPath,

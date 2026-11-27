@@ -31,6 +31,8 @@ export class PlayerController {
   private readonly isStaticWalkable: (cell: GridCoord) => boolean;
   private position: WorldPoint = { x: 0, z: 0 };
   private cell: GridCoord = { row: 0, col: 0 };
+  private cellCenter: WorldPoint;
+  private readonly probe: GridCoord = { row: 0, col: 0 };
   private posture: MaraPosture = 'walk';
   private facing: GridCoord = { row: 0, col: 1 };
   private readonly forward = new THREE.Vector3();
@@ -43,6 +45,7 @@ export class PlayerController {
     private readonly options: PlayerControllerOptions = {}
   ) {
     this.isStaticWalkable = createWalkableLookup(map);
+    this.cellCenter = gridToWorld(this.cell, map);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -50,9 +53,30 @@ export class PlayerController {
 
   spawn(cell: GridCoord): void {
     this.position = gridToWorld(cell, this.map);
+    this.cellCenter = { ...this.position };
     this.cell = { ...cell };
     this.sceneManager.setPlayerPose(this.position.x, this.position.z, false, 1);
-    this.sceneManager.camera.lookAt(this.position.x, 1.5, this.position.z - 5);
+    this.posture = 'walk';
+    let longest = 0;
+    this.facing = { row: -1, col: 0 };
+    for (const [dr, dc] of [[-1, 0], [0, 1], [1, 0], [0, -1], [-1, 1], [1, 1], [1, -1], [-1, -1]]) {
+      let { row, col } = cell;
+      let steps = 0;
+      while (this.isStaticWalkable({ row: row + dr, col: col + dc })) {
+        if (dr && dc && (!this.isStaticWalkable({ row: row + dr, col }) ||
+          !this.isStaticWalkable({ row, col: col + dc }))) break;
+        row += dr;
+        col += dc;
+        steps++;
+      }
+      const distance = steps * Math.hypot(dr, dc);
+      if (distance > longest) {
+        longest = distance;
+        this.facing = { row: dr, col: dc };
+      }
+    }
+    const ahead = gridToWorld({ row: cell.row + this.facing.row, col: cell.col + this.facing.col }, this.map);
+    this.sceneManager.camera.lookAt(ahead.x, this.sceneManager.camera.position.y, ahead.z);
     this.emitMove();
   }
 
@@ -99,31 +123,32 @@ export class PlayerController {
     this.sceneManager.getForwardVector(this.forward);
     const facing = worldDirectionToGrid(this.forward.x, this.forward.z);
 
-    if (moving) {
-      const right = { x: -this.forward.z, z: this.forward.x };
-      let dx = this.forward.x * forwardInput + right.x * strafeInput;
-      let dz = this.forward.z * forwardInput + right.z * strafeInput;
+    const recovering = this.recoverFromBarricade(dt);
+    if (moving && !recovering) {
+      let dx = this.forward.x * forwardInput - this.forward.z * strafeInput;
+      let dz = this.forward.z * forwardInput + this.forward.x * strafeInput;
       const len = Math.hypot(dx, dz) || 1;
       const step = SPEED[posture] * Math.min(dt, 0.05);
       dx = (dx / len) * step;
       dz = (dz / len) * step;
       // Axis-separated moves let the player slide along walls.
-      if (this.canOccupy(this.position.x + dx, this.position.z)) this.position.x += dx;
-      if (this.canOccupy(this.position.x, this.position.z + dz)) this.position.z += dz;
+      this.slideAxis('x', dx);
+      this.slideAxis('z', dz);
     }
 
     this.sceneManager.setPlayerPose(this.position.x, this.position.z, posture === 'stealth', dt);
 
-    const cell = worldToGrid(this.position, this.map);
+    const cell = moving && !recovering ? worldToGrid(this.position, this.map) : this.cell;
+    const movedCell = cell.row !== this.cell.row || cell.col !== this.cell.col;
     const changed =
-      cell.row !== this.cell.row ||
-      cell.col !== this.cell.col ||
+      movedCell ||
       posture !== this.posture ||
       facing.row !== this.facing.row ||
       facing.col !== this.facing.col;
     this.posture = posture;
     if (facing.row !== 0 || facing.col !== 0) this.facing = facing;
     if (changed && this.isWalkable(cell)) {
+      if (movedCell) this.cellCenter = gridToWorld(cell, this.map);
       this.cell = cell;
       this.emitMove();
     }
@@ -143,16 +168,59 @@ export class PlayerController {
     return this.isStaticWalkable(cell) && !(this.options.isDynamicallyBlocked?.(cell) ?? false);
   }
 
-  /** True when a circle of PLAYER_RADIUS at (x, z) only overlaps walkable cells. */
-  private canOccupy(x: number, z: number): boolean {
+  private recoverFromBarricade(dt: number): boolean {
+    const blocked = this.options.isDynamicallyBlocked;
+    if (!blocked) return false;
+    const dx = this.position.x - this.cellCenter.x;
+    const dz = this.position.z - this.cellCenter.z;
+    const half = this.map.cellSize / 2;
+    const gapX = half - Math.abs(dx);
+    const gapZ = half - Math.abs(dz);
+    const col = this.cell.col + Math.sign(dx);
+    const row = this.cell.row + Math.sign(dz);
+    this.probe.row = this.cell.row;
+    this.probe.col = col;
+    let overlaps = gapX < PLAYER_RADIUS && blocked(this.probe);
+    this.probe.row = row;
+    this.probe.col = this.cell.col;
+    overlaps ||= gapZ < PLAYER_RADIUS && blocked(this.probe);
+    this.probe.col = col;
+    overlaps ||= gapX * gapX + gapZ * gapZ < PLAYER_RADIUS ** 2 && blocked(this.probe);
+    if (!overlaps) return false;
+    const correction = 1 - Math.exp(-12 * dt);
+    this.position.x -= dx * correction;
+    this.position.z -= dz * correction;
+    return true;
+  }
+
+  /** Sweep the player's circle to the first contact along this axis. */
+  private slideAxis(axis: 'x' | 'z', delta: number): void {
+    if (delta === 0) return;
+    const { x, z } = this.position;
+    const endX = axis === 'x' ? x + delta : x;
+    const endZ = axis === 'z' ? z + delta : z;
     const r = PLAYER_RADIUS;
-    const corners: WorldPoint[] = [
-      { x: x - r, z: z - r },
-      { x: x + r, z: z - r },
-      { x: x - r, z: z + r },
-      { x: x + r, z: z + r },
-    ];
-    return corners.every((p) => this.isWalkable(worldToGrid(p, this.map)));
+    const min = worldToGrid({ x: Math.min(x, endX) - r, z: Math.min(z, endZ) - r }, this.map);
+    const max = worldToGrid({ x: Math.max(x, endX) + r, z: Math.max(z, endZ) + r }, this.map);
+    const across = axis === 'x' ? 'z' : 'x';
+    const half = this.map.cellSize / 2;
+    const start = this.position[axis];
+    let travel = Math.abs(delta);
+    const sign = Math.sign(delta);
+    for (let row = min.row; row <= max.row; row++) {
+      for (let col = min.col; col <= max.col; col++) {
+        this.probe.row = row;
+        this.probe.col = col;
+        if (this.isWalkable(this.probe)) continue;
+        const center = gridToWorld(this.probe, this.map);
+        const gap = Math.max(0, Math.abs(center[across] - this.position[across]) - half);
+        const ahead = (center[axis] - start) * sign;
+        if (gap >= r || ahead <= 0) continue;
+        const contact = ahead - half - Math.sqrt(r * r - gap * gap);
+        travel = Math.min(travel, Math.max(0, contact - 1e-7));
+      }
+    }
+    this.position[axis] += sign * travel;
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
