@@ -17,29 +17,21 @@ const DEFAULT_ALERT_MAX_DEPTH = 3;
 
 /**
  * Coordinates recursive alert spread across infected agents using propagateAlertRecursive.
- * Excludes non-infected roles (radio_survivor) and stunned agents from relaying.
- * When coordinationEnabled is false, returns a zero-hop result for isolated-agent experiments.
+ * Only living infected participate, and stunned infected cannot relay.
+ * With coordination disabled, an eligible origin receives a zero-hop result.
  */
 export function triggerHordeSpread(
   originAgentId: string,
   agents: AgentSnapshot[],
   options: HordeSpreadOptions = {}
 ): AlertPropagationResult {
-  const coordinationEnabled = options.coordinationEnabled ?? true;
-  if (!coordinationEnabled) {
-    return {
-      originAgentId,
-      maxDepth: 0,
-      reachedAgentIds: [originAgentId],
-      hops: [],
-      maxStackDepth: 1,
-      recursiveCalls: 1,
-    };
-  }
-
   const maxRadius = options.maxRadius ?? DEFAULT_ALERT_RADIUS;
-  const maxDepth = options.maxDepth ?? DEFAULT_ALERT_MAX_DEPTH;
-  const infectedAgents = agents.filter((agent) => agent.role !== 'radio_survivor');
+  const maxDepth = options.coordinationEnabled === false
+    ? 0
+    : options.maxDepth ?? DEFAULT_ALERT_MAX_DEPTH;
+  const infectedAgents = agents.filter(
+    (agent) => agent.role !== 'radio_survivor' && agent.state !== 'dead'
+  );
 
   const userCanRelay = options.canRelay;
   return propagateAlertRecursive(originAgentId, infectedAgents, maxRadius, maxDepth, {
@@ -48,7 +40,6 @@ export function triggerHordeSpread(
     minSignal: options.minSignal ?? 0.1,
     initialSignal: options.initialSignal ?? 1,
     canRelay: (agent) =>
-      agent.role !== 'radio_survivor' &&
       agent.state !== 'stunned' &&
       (userCanRelay ? userCanRelay(agent) : true),
   });

@@ -1,5 +1,6 @@
 import {
   GUNSHOT_SOURCE_ID,
+  type AgentRole,
   type AgentSnapshot,
   type AlertPropagationResult,
   type AlgorithmType,
@@ -37,17 +38,26 @@ import {
 import {
   applyExternalMaraMove,
   createInitialMaraSnapshot,
+  getScaledRadiiForCellSize,
   selectBarricadePlacementCell,
   updateMaraState,
   type ExtendedMaraSnapshot,
   type ExternalMaraMove,
   type MaraInputState,
 } from './maraController.ts';
-import { consumeRound, getWeaponDefinition, reloadWeapon } from './weapons.ts';
+import {
+  addAmmoToReserve,
+  consumeRound,
+  finishReload,
+  getWeaponDefinition,
+  startTimedReload,
+} from './weapons.ts';
 import {
   buildSceneLayout,
+  computeReachableDistances,
   getScenePreset,
   type AgentSpawnConfig,
+  type LootPickup,
   type WorldPickup,
 } from './scenes.ts';
 
@@ -100,6 +110,8 @@ export interface ExtendedWorldSnapshot extends WorldSnapshot {
   barricades: GridCoord[];
   activeDecoys: ActiveDecoy[];
   pickups: WorldPickup[];
+  lootPickups?: LootPickup[];
+  reloadTicksRemaining?: number;
   algorithmComparison: AlgorithmComparisonMetrics;
 }
 
@@ -187,6 +199,10 @@ export class SimulationEngine {
   private activeDecoys: ActiveDecoy[] = [];
   private barricades: GridCoord[] = [];
   private pickups: WorldPickup[] = [];
+  private lootPickups: LootPickup[] = [];
+  private reloadTicksRemaining = 0;
+  private pendingInteract = false;
+  private lastRefugeDamageTick = -100;
   private refugePosition!: GridCoord;
   private pharmacyPosition!: GridCoord;
   private extractionPosition!: GridCoord;
@@ -217,11 +233,67 @@ export class SimulationEngine {
     this.algorithm = options.algorithm ?? 'astar';
     this.heuristic = options.heuristic ?? 'octile';
     this.coordinationEnabled = options.coordinationEnabled ?? true;
-    this.alertRadius = options.alertRadius ?? 7;
+    this.alertRadius = options.alertRadius ?? (this.isFineGrid() ? 12 : 7);
     this.alertMaxDepth = options.alertMaxDepth ?? 3;
     this.maxLogs = options.maxLogs ?? 80;
 
     this.initializeScene(sceneId, this.seed);
+  }
+
+  private isFineGrid(): boolean {
+    return this.map.cellSize <= 1;
+  }
+
+  private effectiveVisionRange(role: AgentRole): number {
+    if (!this.isFineGrid()) return AGENT_PROFILES[role].visionRange;
+    return role === 'pursuer' ? 11 : 9;
+  }
+
+  private effectiveAttackCooldown(role: AgentRole): number {
+    const base = AGENT_PROFILES[role].attackCooldownTicks;
+    return this.isFineGrid() ? (role === 'explorer' ? 5 : 4) : base;
+  }
+
+  private effectiveReloadDurationTicks(weaponId: string): number {
+    const def = getWeaponDefinition(weaponId);
+    return this.isFineGrid()
+      ? def.reloadDurationTicks
+      : Math.max(2, Math.round(def.reloadDurationTicks / 2));
+  }
+
+  private effectiveDecoyDurationTicks(): number {
+    return this.isFineGrid() ? 6 : 4;
+  }
+
+  private effectivePharmacyPerimeter(): number {
+    return this.isFineGrid() ? 5 : 2.5;
+  }
+
+  private effectiveRefugePerimeter(): number {
+    return this.isFineGrid() ? 2.5 : 1.5;
+  }
+
+  private effectiveRadioInstallStep(): number {
+    return this.isFineGrid() ? 20 : 25;
+  }
+
+  private effectiveRefugeDamageCooldownTicks(): number {
+    return this.isFineGrid() ? 2 : 1;
+  }
+
+  private computeExtractionWindowTicks(): number {
+    const preset = getScenePreset(5);
+    const fallback = Math.max(
+      preset.extractionWindowTicks,
+      Math.round((this.map.width + this.map.height) * 1.5)
+    );
+    const route = runAStar(this.graph, this.refugePosition, this.extractionPosition, 'octile');
+    if (!route.found) return fallback;
+    const steps = Math.max(1, route.path.length - 1);
+    return Math.max(
+      preset.extractionWindowTicks,
+      Math.round(steps * (this.isFineGrid() ? 1.85 : 1.5))
+    );
   }
 
   getGraph(): WeightedGraph {
@@ -241,6 +313,7 @@ export class SimulationEngine {
         ...this.mara,
         position: { ...this.mara.position },
         facing: { ...this.mara.facing },
+        weapon: { ...this.mara.weapon },
       },
       agents: this.agentRuntimes.map((runtime) => toAgentSnapshot(runtime)),
       activeAlerts: this.activeAlerts.map((alert) => ({
@@ -269,6 +342,8 @@ export class SimulationEngine {
       barricades: this.barricades.map((b) => ({ ...b })),
       activeDecoys: this.activeDecoys.map((d) => ({ ...d, position: { ...d.position } })),
       pickups: this.pickups.map((p) => ({ ...p, position: { ...p.position } })),
+      lootPickups: this.lootPickups.map((l) => ({ ...l, position: { ...l.position } })),
+      reloadTicksRemaining: this.reloadTicksRemaining,
       algorithmComparison: {
         dijkstra: { ...this.algorithmComparison.dijkstra },
         astar: { ...this.algorithmComparison.astar },
@@ -331,7 +406,7 @@ export class SimulationEngine {
         decoyTarget: targetCoord,
       },
       this.tickCount + 1,
-      { graph: this.graph }
+      { graph: this.graph, cellSize: this.map.cellSize }
     );
 
     if (!result.decoySound) return null;
@@ -370,7 +445,7 @@ export class SimulationEngine {
       id: `sound-barricade-${this.tickCount + 1}`,
       sourceId: 'barricade_place',
       position: { ...cell },
-      radius: 5,
+      radius: getScaledRadiiForCellSize(this.map.cellSize).barricadeRadius,
       intensity: 0.62,
       timestamp: this.tickCount + 1,
     };
@@ -427,7 +502,11 @@ export class SimulationEngine {
 
     const weapon = consumeRound(this.mara.weapon);
     if (!weapon) {
-      this.pushLog('gameplay', 'Weapon click: magazine empty (press R to reload)');
+      if (this.mara.weapon.reloading) {
+        this.pushLog('gameplay', 'Weapon busy: reload in progress');
+      } else {
+        this.pushLog('gameplay', 'Weapon click: magazine empty (press R to reload)');
+      }
       return none;
     }
     this.mara.weapon = weapon;
@@ -454,12 +533,14 @@ export class SimulationEngine {
   }
 
   reload(): boolean {
-    const before = this.mara.weapon;
-    if (before.ammoInMagazine >= before.magazineSize || before.ammoReserve <= 0) return false;
-    this.mara.weapon = reloadWeapon(before);
+    if (this.status !== 'playing' || this.paused) return false;
+    const started = startTimedReload(this.mara.weapon);
+    if (!started) return false;
+    this.mara.weapon = started.weapon;
+    this.reloadTicksRemaining = this.effectiveReloadDurationTicks(started.weapon.id);
     this.pushLog(
       'gameplay',
-      `Mara reloaded [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
+      `Mara reloading ${started.weapon.id} (${this.reloadTicksRemaining} ticks) [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
     );
     return true;
   }
@@ -505,7 +586,9 @@ export class SimulationEngine {
         this.placeBarricade(command.target);
         break;
       case 'interact':
-        // Phase 0: pickups are collected by proximity. Front C can require explicit interaction.
+        if (this.status === 'playing' && !this.paused) {
+          this.pendingInteract = true;
+        }
         break;
     }
   }
@@ -539,6 +622,17 @@ export class SimulationEngine {
     this.tickCount++;
     this.elapsedMs += deltaMs;
     this.activeAlerts = [];
+
+    if (this.reloadTicksRemaining > 0) {
+      this.reloadTicksRemaining--;
+      if (this.reloadTicksRemaining === 0 && this.mara.weapon.reloading) {
+        this.mara.weapon = finishReload(this.mara.weapon);
+        this.pushLog(
+          'gameplay',
+          `Reload complete [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
+        );
+      }
+    }
 
     const tickSounds: SoundEvent[] = [...this.pendingSounds];
     this.pendingSounds = [];
@@ -574,7 +668,13 @@ export class SimulationEngine {
       };
       this.pendingExternalMove = null;
       input.moveDirection = { row: 0, col: 0 };
-      const external = applyExternalMaraMove(this.mara, move, this.tickCount, this.graph);
+      const external = applyExternalMaraMove(
+        this.mara,
+        move,
+        this.tickCount,
+        this.graph,
+        this.map.cellSize
+      );
       this.mara = external.mara;
       if (external.emittedSound) tickSounds.push(external.emittedSound);
     }
@@ -591,6 +691,7 @@ export class SimulationEngine {
           graph: this.graph,
           occupiedByAgents: this.livingAgentPositions(),
           protectedCells: [this.refugePosition, this.extractionPosition],
+          cellSize: this.map.cellSize,
         });
     this.mara = maraResult.mara;
 
@@ -633,19 +734,20 @@ export class SimulationEngine {
     for (const runtime of this.agentRuntimes) {
       if (runtime.state === 'dead') continue;
       const profile = AGENT_PROFILES[runtime.role];
+      const visionRange = this.effectiveVisionRange(runtime.role);
 
       // Strictly local LOS check performed by environment; AgentBrain never sees Mara directly.
       let visualTarget: GridCoord | null = null;
       let nearbyThreatForSurvivor: GridCoord | null = null;
 
       if (runtime.role === 'radio_survivor') {
-        nearbyThreatForSurvivor = this.findNearestInfectedNearRefuge(profile.visionRange);
+        nearbyThreatForSurvivor = this.findNearestVisibleInfected(runtime.position, visionRange);
       } else {
         const seesMara = hasLineOfSight(
           this.graph,
           runtime.position,
           this.mara.position,
-          profile.visionRange,
+          visionRange,
           this.opaqueCells
         );
         if (seesMara) {
@@ -757,18 +859,15 @@ export class SimulationEngine {
     this.radioInstallProgress = sceneId === 5 ? 100 : 0;
     this.extractionOpen = sceneId === 5;
     this.pharmacyDoorTriggered = sceneId >= 3;
+    this.reloadTicksRemaining = 0;
+    this.pendingInteract = false;
+    this.lastRefugeDamageTick = -100;
     this.algorithmComparison = {
       dijkstra: createMetricBucket(),
       astar: createMetricBucket(),
     };
 
     const preset = getScenePreset(sceneId);
-    const scaledWindow = Math.max(
-      preset.extractionWindowTicks,
-      Math.round((this.map.width + this.map.height) * 1.5)
-    );
-    this.extractionTicksRemaining = sceneId === 5 ? scaledWindow : null;
-
     const layout = buildSceneLayout(
       this.map,
       this.graph,
@@ -780,6 +879,8 @@ export class SimulationEngine {
     this.pharmacyPosition = layout.pharmacyPosition;
     this.extractionPosition = layout.extractionPosition;
     this.pickups = layout.pickups;
+    this.lootPickups = layout.lootPickups;
+    this.extractionTicksRemaining = sceneId === 5 ? this.computeExtractionWindowTicks() : null;
 
     this.mara = createInitialMaraSnapshot(this.map.spawnMara, {
       hasMedicalKit: sceneId >= 3,
@@ -810,7 +911,7 @@ export class SimulationEngine {
     this.activeDecoys.push({
       id: sound.sourceId,
       position: { ...sound.position },
-      remainingTicks: 4,
+      remainingTicks: this.effectiveDecoyDurationTicks(),
       radius: sound.radius,
       intensity: sound.intensity,
     });
@@ -824,31 +925,38 @@ export class SimulationEngine {
   }
 
   private processGameplayTriggers(tickSounds: SoundEvent[]): void {
+    const interacted = this.pendingInteract;
+    this.pendingInteract = false;
+
     // Scene 1 -> Scene 2 when approaching the pharmacy sector
     if (
       this.sceneId === 1 &&
-      gridDistance(this.mara.position, this.pharmacyPosition) <= 2.5
+      gridDistance(this.mara.position, this.pharmacyPosition) <= this.effectivePharmacyPerimeter()
     ) {
       this.transitionToScene(2, 'Mara reached the pharmacy perimeter');
     }
 
-    // Collect supplies when stepping onto pickup coordinates
+    const reach = (this.externalControl ? 1 : 0) + (interacted ? 1 : 0);
+
+    // Collect mission supplies when stepping onto pickup coordinates
     for (const pickup of this.pickups) {
       if (pickup.collected) continue;
-      const reach = this.externalControl ? 1 : 0;
       const dRow = Math.abs(this.mara.position.row - pickup.position.row);
       const dCol = Math.abs(this.mara.position.col - pickup.position.col);
       if (Math.max(dRow, dCol) <= reach) {
         pickup.collected = true;
         if (pickup.kind === 'medicine') {
           this.mara.hasMedicalKit = true;
+          if (this.mara.health < 100) {
+            this.mara.health = Math.min(100, this.mara.health + 20);
+          }
           if (!this.pharmacyDoorTriggered) {
             this.pharmacyDoorTriggered = true;
             const doorSound: SoundEvent = {
               id: `sound-pharmacy-door-${this.tickCount}`,
               sourceId: 'pharmacy_metal_door',
               position: { ...pickup.position },
-              radius: 10,
+              radius: this.isFineGrid() ? 18 : 10,
               intensity: 0.95,
               timestamp: this.tickCount,
             };
@@ -871,6 +979,33 @@ export class SimulationEngine {
       }
     }
 
+    // Collect scavenging loot (ammo boxes and medkits)
+    for (const loot of this.lootPickups) {
+      if (loot.collected) continue;
+      const dRow = Math.abs(this.mara.position.row - loot.position.row);
+      const dCol = Math.abs(this.mara.position.col - loot.position.col);
+      if (Math.max(dRow, dCol) <= reach) {
+        if (loot.kind === 'ammo') {
+          const def = getWeaponDefinition(this.mara.weapon.id);
+          if (this.mara.weapon.ammoReserve >= def.maxReserve) continue;
+          loot.collected = true;
+          this.mara.weapon = addAmmoToReserve(this.mara.weapon, loot.amount);
+          this.pushLog(
+            'gameplay',
+            `Ammo loot collected (+${loot.amount}) at (${loot.position.row},${loot.position.col}) [reserve=${this.mara.weapon.ammoReserve}]`
+          );
+        } else if (loot.kind === 'medkit') {
+          if (this.mara.health >= 100) continue;
+          loot.collected = true;
+          this.mara.health = Math.min(100, this.mara.health + loot.amount);
+          this.pushLog(
+            'gameplay',
+            `Medkit collected (+${loot.amount} HP) at (${loot.position.row},${loot.position.col}) [health=${this.mara.health}]`
+          );
+        }
+      }
+    }
+
     // Scene 3 -> Scene 4 once all three supplies are collected
     if (
       this.sceneId === 3 &&
@@ -884,15 +1019,18 @@ export class SimulationEngine {
     // Scene 4: install battery & activate radio at the refuge
     const allSuppliesReady =
       this.mara.hasMedicalKit && this.mara.hasFuel && this.mara.hasBattery;
-    const atRefuge = gridDistance(this.mara.position, this.refugePosition) <= 1.5;
+    const atRefuge =
+      gridDistance(this.mara.position, this.refugePosition) <=
+      this.effectiveRefugePerimeter() + (interacted ? 1 : 0);
 
     if (this.sceneId === 4 && allSuppliesReady && atRefuge && !this.radioActivated) {
-      this.radioInstallProgress = Math.min(100, this.radioInstallProgress + 25);
+      const installStep = this.effectiveRadioInstallStep() + (interacted ? 5 : 0);
+      this.radioInstallProgress = Math.min(100, this.radioInstallProgress + installStep);
       tickSounds.push({
         id: `sound-radio-hum-${this.tickCount}`,
         sourceId: 'refuge_radio_generator',
         position: { ...this.refugePosition },
-        radius: 9,
+        radius: this.isFineGrid() ? 16 : 9,
         intensity: 0.8,
         timestamp: this.tickCount,
       });
@@ -901,16 +1039,12 @@ export class SimulationEngine {
       if (this.radioInstallProgress >= 100) {
         this.radioActivated = true;
         this.extractionOpen = true;
-        const preset = getScenePreset(5);
-        this.extractionTicksRemaining = Math.max(
-          preset.extractionWindowTicks,
-          Math.round((this.map.width + this.map.height) * 1.5)
-        );
+        this.extractionTicksRemaining = this.computeExtractionWindowTicks();
         tickSounds.push({
           id: `sound-radio-signal-${this.tickCount}`,
           sourceId: 'radio_extraction_signal',
           position: { ...this.refugePosition },
-          radius: 12,
+          radius: this.isFineGrid() ? 22 : 12,
           intensity: 0.9,
           timestamp: this.tickCount,
         });
@@ -923,7 +1057,13 @@ export class SimulationEngine {
 
     // Scene 5 extraction countdown
     if (this.sceneId === 5 && this.extractionOpen && this.extractionTicksRemaining !== null) {
-      if (!sameCoord(this.mara.position, this.extractionPosition)) {
+      const extReach = this.externalControl ? 1 : 0;
+      const atExtraction =
+        Math.max(
+          Math.abs(this.mara.position.row - this.extractionPosition.row),
+          Math.abs(this.mara.position.col - this.extractionPosition.col)
+        ) <= extReach;
+      if (!atExtraction) {
         this.extractionTicksRemaining = Math.max(0, this.extractionTicksRemaining - 1);
       }
     }
@@ -934,6 +1074,77 @@ export class SimulationEngine {
     this.sceneId = nextScene;
     const preset = getScenePreset(nextScene);
     this.pushLog('gameplay', `Scene ${nextScene} - ${preset.name}: ${reason}`);
+    this.spawnSceneReinforcements(nextScene);
+  }
+
+  private spawnSceneReinforcements(sceneId: SceneId): void {
+    if (this.options.customAgents) return;
+
+    const preset = getScenePreset(sceneId);
+    const { reachable } = computeReachableDistances(this.graph, this.mara.position);
+    const walkableCount =
+      reachable.length > 0
+        ? reachable.length
+        : this.map.cells.reduce((acc, cell) => acc + (cell.walkable ? 1 : 0), 0);
+    if (walkableCount === 0) return;
+
+    const maxInfectedForMap = Math.max(2, Math.floor(walkableCount / 10));
+    const totalRequested = preset.explorerCount + preset.pursuerCount;
+    const scale = totalRequested > maxInfectedForMap ? maxInfectedForMap / totalRequested : 1;
+    const targetExplorers = Math.max(1, Math.round(preset.explorerCount * scale));
+    const targetPursuers = Math.max(1, Math.round(preset.pursuerCount * scale));
+
+    const livingExplorers = this.agentRuntimes.filter(
+      (a) => a.role === 'explorer' && a.state !== 'dead'
+    ).length;
+    const livingPursuers = this.agentRuntimes.filter(
+      (a) => a.role === 'pursuer' && a.state !== 'dead'
+    ).length;
+
+    const needExplorers = Math.max(0, targetExplorers - livingExplorers);
+    const needPursuers = Math.max(0, targetPursuers - livingPursuers);
+    if (needExplorers === 0 && needPursuers === 0) return;
+
+    const poolSource =
+      reachable.length > 0
+        ? reachable
+        : this.map.cells.filter((c) => c.walkable).map((c) => ({ row: c.row, col: c.col }));
+    const occupied = this.livingAgentPositions();
+    const minDist = this.isFineGrid() ? 10 : 5;
+    const visionCheck = this.isFineGrid() ? 11 : 6;
+
+    const candidates = poolSource.filter(
+      (cell) =>
+        gridDistance(cell, this.mara.position) >= minDist &&
+        !sameCoord(cell, this.refugePosition) &&
+        occupied.every((pos) => !sameCoord(pos, cell)) &&
+        !hasLineOfSight(this.graph, cell, this.mara.position, visionCheck, this.opaqueCells)
+    );
+    if (candidates.length === 0) return;
+    this.rng.shuffle(candidates);
+
+    const nextIdFor = (role: 'explorer' | 'pursuer'): string => {
+      let idx = 1;
+      while (this.agentRuntimes.some((a) => a.id === `${role}-${idx}`)) idx++;
+      return `${role}-${idx}`;
+    };
+
+    const spawnRole = (role: 'explorer' | 'pursuer'): void => {
+      const pos = candidates.pop();
+      if (!pos) return;
+      const runtime = createAgentRuntime(
+        nextIdFor(role),
+        role,
+        pos,
+        [{ ...pos }],
+        this.algorithm,
+        this.heuristic
+      );
+      this.agentRuntimes.push(runtime);
+    };
+
+    for (let i = 0; i < needExplorers; i++) spawnRole('explorer');
+    for (let i = 0; i < needPursuers; i++) spawnRole('pursuer');
   }
 
   /**
@@ -990,13 +1201,16 @@ export class SimulationEngine {
     return assignments;
   }
 
-  private findNearestInfectedNearRefuge(radius: number): GridCoord | null {
+  private findNearestVisibleInfected(observer: GridCoord, radius: number): GridCoord | null {
     let best: GridCoord | null = null;
     let bestDist = Infinity;
     for (const runtime of this.agentRuntimes) {
       if (runtime.role === 'radio_survivor' || runtime.state === 'stunned' || runtime.state === 'dead') continue;
-      const d = gridDistance(this.refugePosition, runtime.position);
-      if (d <= radius && d < bestDist) {
+      const d = gridDistance(observer, runtime.position);
+      if (
+        d < bestDist &&
+        hasLineOfSight(this.graph, observer, runtime.position, radius, this.opaqueCells)
+      ) {
         bestDist = d;
         best = { ...runtime.position };
       }
@@ -1006,12 +1220,18 @@ export class SimulationEngine {
 
   private resolveCombatAndEndConditions(): void {
     // Check victory first if Mara stepped onto the open extraction point
+    const extReach = this.externalControl ? 1 : 0;
+    const atExtraction =
+      Math.max(
+        Math.abs(this.mara.position.row - this.extractionPosition.row),
+        Math.abs(this.mara.position.col - this.extractionPosition.col)
+      ) <= extReach;
     if (
       this.radioActivated &&
       this.extractionOpen &&
       this.refugeIntegrity > 0 &&
       this.mara.health > 0 &&
-      sameCoord(this.mara.position, this.extractionPosition)
+      atExtraction
     ) {
       this.mara.reachedExtraction = true;
       this.status = 'victory';
@@ -1022,11 +1242,15 @@ export class SimulationEngine {
     for (const runtime of this.agentRuntimes) {
       if (runtime.role === 'radio_survivor' || runtime.state === 'stunned' || runtime.state === 'dead') continue;
       const profile = AGENT_PROFILES[runtime.role];
+      const cooldown = this.effectiveAttackCooldown(runtime.role);
 
-      if (sameCoord(runtime.position, this.mara.position)) {
+      if (
+        sameCoord(runtime.position, this.mara.position) &&
+        this.tickCount - runtime.lastAttackTick >= cooldown
+      ) {
         runtime.state = 'attack';
+        runtime.lastAttackTick = this.tickCount;
         this.mara.health = Math.max(0, this.mara.health - profile.meleeDamage);
-        runtime.stunnedUntilTick = this.tickCount + 1;
         this.pushLog(
           'gameplay',
           `${runtime.id} attacked Mara for ${profile.meleeDamage} damage [health=${this.mara.health}]`
@@ -1035,8 +1259,10 @@ export class SimulationEngine {
 
       if (
         (this.sceneId === 4 || this.radioInstallProgress > 0) &&
-        gridDistance(runtime.position, this.refugePosition) <= 1
+        gridDistance(runtime.position, this.refugePosition) <= 1 &&
+        this.tickCount - this.lastRefugeDamageTick >= this.effectiveRefugeDamageCooldownTicks()
       ) {
+        this.lastRefugeDamageTick = this.tickCount;
         this.refugeIntegrity = Math.max(0, this.refugeIntegrity - 10);
         this.pushLog(
           'gameplay',
