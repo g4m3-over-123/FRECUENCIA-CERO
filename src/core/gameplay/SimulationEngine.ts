@@ -62,7 +62,11 @@ import type { WeaponSnapshot } from '../contracts.ts';
 import {
   buildSceneLayout,
   computeReachableDistances,
+  escapeCorridorCells,
+  getActSpacing,
   getScenePreset,
+  hasEscapeRoute,
+  pickPharmacyWatchCells,
   type AgentSpawnConfig,
   type LootPickup,
   type WorldPickup,
@@ -215,6 +219,8 @@ export class SimulationEngine {
   private refugePosition!: GridCoord;
   private pharmacyPosition!: GridCoord;
   private extractionPosition!: GridCoord;
+  /** First cells of the way out of the pharmacy; the horde never gets flanking slots on them. */
+  private pharmacyEscapeCells: GridCoord[] = [];
   private refugeIntegrity = 100;
   private radioActivated = false;
   private radioInstallProgress = 0;
@@ -295,6 +301,11 @@ export class SimulationEngine {
     );
     const route = runAStar(this.graph, this.refugePosition, this.extractionPosition, 'octile');
     if (!route.found) return fallback;
+    if (this.isFineGrid()) {
+      // One tick covers one cell at zombie chase speed and Mara walks ~25% faster, so 1.4x the
+      // route cost plus a short reaction margin is tight but leaves room for one detour or a fight.
+      return Math.max(24, Math.round(route.totalCost * 1.4) + 6);
+    }
     const steps = Math.max(1, route.path.length - 1);
     return Math.max(
       preset.extractionWindowTicks,
@@ -925,6 +936,12 @@ export class SimulationEngine {
     this.extractionPosition = layout.extractionPosition;
     this.pickups = layout.pickups;
     this.lootPickups = layout.lootPickups;
+    this.pharmacyEscapeCells = escapeCorridorCells(
+      this.graph,
+      this.pharmacyPosition,
+      this.extractionPosition,
+      getActSpacing(this.map).escapeCorridor
+    );
     this.extractionTicksRemaining = sceneId === 5 ? this.computeExtractionWindowTicks() : null;
 
     this.weaponInventory.clear();
@@ -1172,15 +1189,59 @@ export class SimulationEngine {
     const minDist = this.isFineGrid() ? 10 : 5;
     const visionCheck = this.isFineGrid() ? 11 : 6;
 
+    const spacing = getActSpacing(this.map);
+    const nearPharmacy = gridDistance(this.mara.position, this.pharmacyPosition) <= spacing.ringMin;
     const candidates = poolSource.filter(
       (cell) =>
         gridDistance(cell, this.mara.position) >= minDist &&
-        !sameCoord(cell, this.refugePosition) &&
+        gridDistance(cell, this.refugePosition) >= spacing.keyPointGuard &&
+        gridDistance(cell, this.extractionPosition) >= spacing.keyPointGuard &&
+        // Right after the door slam the district wakes up from afar, not inside the shop's exits.
+        (sceneId !== 3 || !nearPharmacy || gridDistance(cell, this.pharmacyPosition) > spacing.ringMax) &&
         occupied.every((pos) => !sameCoord(pos, cell)) &&
         !hasLineOfSight(this.graph, cell, this.mara.position, visionCheck, this.opaqueCells)
     );
     if (candidates.length === 0) return;
     this.rng.shuffle(candidates);
+
+    // Scene 2 reinforcements extend the pharmacy watch chain; the rest must not seal Mara's way out.
+    const watch =
+      sceneId === 2 && nearPharmacy
+        ? pickPharmacyWatchCells(
+            this.graph,
+            this.opaqueCells,
+            this.pharmacyPosition,
+            this.extractionPosition,
+            candidates,
+            this.agentRuntimes
+              .filter((a) => a.role !== 'radio_survivor' && a.state !== 'dead')
+              .map((a) => a.position),
+            [],
+            needExplorers + needPursuers,
+            spacing,
+            visionCheck
+          )
+        : [];
+    const takeCell = (): GridCoord | undefined => {
+      const fromWatch = watch.shift();
+      if (fromWatch) return fromWatch;
+      while (candidates.length > 0) {
+        const cell = candidates.pop()!;
+        if (
+          !nearPharmacy ||
+          hasEscapeRoute(
+            this.graph,
+            this.mara.position,
+            this.extractionPosition,
+            [...this.livingAgentPositions(), cell],
+            spacing.clearance
+          )
+        ) {
+          return cell;
+        }
+      }
+      return undefined;
+    };
 
     const nextIdFor = (role: 'explorer' | 'pursuer'): string => {
       let idx = 1;
@@ -1189,7 +1250,7 @@ export class SimulationEngine {
     };
 
     const spawnRole = (role: 'explorer' | 'pursuer'): void => {
-      const pos = candidates.pop();
+      const pos = takeCell();
       if (!pos) return;
       const runtime = createAgentRuntime(
         nextIdFor(role),
@@ -1249,9 +1310,12 @@ export class SimulationEngine {
       }
     }
 
+    const pharmacyGuard = this.isFineGrid() ? 4 : 2;
     for (const cluster of clusters) {
       if (cluster.members.length < 2) continue;
-      const spread = assignDistributedTargets(this.graph, cluster.focus, cluster.members, 3);
+      const keepClear =
+        gridDistance(cluster.focus, this.pharmacyPosition) <= pharmacyGuard ? this.pharmacyEscapeCells : [];
+      const spread = assignDistributedTargets(this.graph, cluster.focus, cluster.members, 3, keepClear);
       for (const [agentId, slot] of spread.entries()) {
         assignments.set(agentId, slot);
       }

@@ -10,6 +10,7 @@ import type {
   WorldSnapshot,
 } from '../src/core/contracts.ts';
 import { WeightedGraph } from '../src/core/graph/WeightedGraph.ts';
+import { runAStar } from '../src/core/algorithms/astar.ts';
 import { generateCityMap } from '../src/core/graph/mapGenerator.ts';
 import { parseMapDefinition } from '../src/core/graph/mapLoader.ts';
 import {
@@ -685,5 +686,72 @@ describe('5-Scene progression, algorithm switching, and end conditions', () => {
       expect(snap.tick).toBe(5);
       expect(snap.agents.length).toBeGreaterThanOrEqual(3);
     }
+  });
+});
+
+describe('Act pacing on map_street (pharmacy door and supplies)', () => {
+  const street = parseMapDefinition(
+    JSON.parse(readFileSync(resolve(__dirname, '../public/maps/map_street.json'), 'utf8'))
+  );
+  const chebyshev = (a: GridCoord, b: GridCoord): number =>
+    Math.max(Math.abs(a.row - b.row), Math.abs(a.col - b.col));
+
+  const walkToPharmacy = (engine: SimulationEngine) => {
+    let snap = engine.getSnapshot();
+    const path = runAStar(engine.getGraph(), snap.mara.position, snap.pharmacyPosition, 'octile').path;
+    for (const cell of path.slice(1)) {
+      engine.applyCommand({ type: 'moveToCell', cell, posture: 'stealth' });
+      snap = engine.step(200);
+      if (snap.mara.hasMedicalKit) break;
+    }
+    return snap;
+  };
+
+  it.each([1337, 7, 42, 99, 2024])('door slam relays an AlertHop and leaves the exit open (seed %i)', (seed) => {
+    const engine = new SimulationEngine(street, 1, { seed });
+    const snap = walkToPharmacy(engine);
+    expect(snap.mara.hasMedicalKit).toBe(true);
+    expect(snap.soundEvents.some((s) => s.sourceId === 'pharmacy_metal_door')).toBe(true);
+    expect(snap.activeAlerts.reduce((n, a) => n + a.hops.length, 0)).toBeGreaterThan(0);
+
+    const threats = snap.agents
+      .filter((a) => a.role !== 'radio_survivor' && a.state !== 'dead')
+      .map((a) => a.position);
+    const probe = engine.getGraph().clone();
+    for (const t of threats) {
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const cell = { row: t.row + dr, col: t.col + dc };
+          if (probe.isWalkable(cell) && chebyshev(cell, snap.mara.position) > 0) probe.setBlocked(cell, true);
+        }
+      }
+    }
+    expect(runAStar(probe, snap.mara.position, street.extractionPoint, 'octile').found).toBe(true);
+  });
+
+  it('starting at scene 3 puts fuel and battery far from the refuge and no infected on key points', () => {
+    const engine = new SimulationEngine(street, 3, { seed: 1337 });
+    const snap = engine.getSnapshot();
+    const graph = engine.getGraph();
+    const steps = (cell: GridCoord): number => runAStar(graph, snap.refugePosition, cell, 'octile').path.length - 1;
+    const fuel = snap.pickups.find((p) => p.kind === 'fuel')!.position;
+    const battery = snap.pickups.find((p) => p.kind === 'battery')!.position;
+    const farthest = Math.max(...street.cells.filter((c) => c.walkable).map((c) => chebyshev(c, snap.refugePosition)));
+    expect(chebyshev(fuel, snap.refugePosition)).toBeGreaterThan(farthest * 0.4);
+    expect(steps(battery)).toBeGreaterThanOrEqual(steps(fuel) * 0.8);
+    for (const agent of snap.agents.filter((a) => a.role !== 'radio_survivor')) {
+      expect(chebyshev(agent.position, snap.refugePosition)).toBeGreaterThanOrEqual(6);
+      expect(chebyshev(agent.position, street.extractionPoint)).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it('scene 5 extraction window is tight but covers the refuge-to-exit route', () => {
+    const engine = new SimulationEngine(street, 5, { seed: 1337 });
+    const snap = engine.getSnapshot();
+    const route = runAStar(engine.getGraph(), snap.refugePosition, street.extractionPoint, 'octile');
+    const window = snap.extractionTicksRemaining!;
+    expect(window).toBe(Math.max(24, Math.round(route.totalCost * 1.4) + 6));
+    expect(window).toBeGreaterThan(route.path.length - 1);
+    expect(window).toBeLessThan((route.path.length - 1) * 2);
   });
 });
