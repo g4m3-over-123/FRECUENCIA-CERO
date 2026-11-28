@@ -11,6 +11,7 @@ const RELOAD_TIMING = { raise: .38, perRound: .58, lower: .38 };
 const WALK_SPEED = 3.2;
 const SPRINT_SPEED = 4.6;
 const TICK_SECONDS = .385;
+const FLASH_FORWARD_OFFSET = .16;
 
 type ClipSlice = {
   source: string;
@@ -18,12 +19,20 @@ type ClipSlice = {
   to: number;
 };
 
+interface MuzzleAttachment {
+  nodeName: string;
+  localPosition: readonly [number, number, number];
+}
+
 interface WeaponRigConfig {
   asset: string;
   rest: readonly [number, number, number];
   mount: { position: readonly [number, number, number]; rotationY: number; scale: number };
-  muzzleLocal?: readonly [number, number, number];
-  flashPower: number;
+  muzzles?: readonly MuzzleAttachment[];
+  flashScale: number;
+  flashDuration: number;
+  flashOpacity: number;
+  flashLightPower: number;
   fireDuration: number;
   clipPrefix?: string;
   slices?: Record<string, ClipSlice>;
@@ -34,7 +43,10 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'fps_character_animation_pack_saps-12.glb',
     rest: [.05, -.15, -.16],
     mount: { position: [-.02, -1.4, 0], rotationY: Math.PI, scale: .4 },
-    flashPower: 21,
+    flashScale: .22,
+    flashDuration: .055,
+    flashOpacity: .92,
+    flashLightPower: 14,
     fireDuration: .34,
     clipPrefix: 'RIG_UE5_Comando_',
   },
@@ -42,8 +54,11 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'm4_-_fps_weapon_animations_pack_v.1.glb',
     rest: [.01, -.04, -.06],
     mount: { position: [.011, -1.539, -.101], rotationY: Math.PI, scale: 1 },
-    muzzleLocal: [0, 1.44, .63],
-    flashPower: 21,
+    muzzles: [{ nodeName: 'Main_j_049', localPosition: [.342, 1.817, 55.395] }],
+    flashScale: .18,
+    flashDuration: .048,
+    flashOpacity: .9,
+    flashLightPower: 11,
     fireDuration: .18,
     slices: {
       Equip: { source: 'Draw', from: 8.967, to: 10.0 },
@@ -57,8 +72,11 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'persuader_animated.glb',
     rest: [.06, -.12, -.10],
     mount: { position: [0, 0, 0], rotationY: Math.PI, scale: .85 },
-    muzzleLocal: [0, .08, .66],
-    flashPower: 19,
+    muzzles: [{ nodeName: 'base', localPosition: [0, 9.969, 61.113] }],
+    flashScale: .15,
+    flashDuration: .045,
+    flashOpacity: .85,
+    flashLightPower: 9,
     fireDuration: .24,
     slices: {
       Fire: { source: 'allanims', from: 0, to: .35 },
@@ -71,8 +89,14 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'dual_mac10_smg_-_animated.glb',
     rest: [0, -.12, -.22],
     mount: { position: [0, 0, 0], rotationY: 0, scale: .9 },
-    muzzleLocal: [.13, .04, -.4],
-    flashPower: 10,
+    muzzles: [
+      { nodeName: 'mac10r_suppressor', localPosition: [-.031, -.045, 26.212] },
+      { nodeName: 'mac10l_suppressor', localPosition: [.027, -.054, 26.212] },
+    ],
+    flashScale: .075,
+    flashDuration: .034,
+    flashOpacity: .42,
+    flashLightPower: 2.2,
     fireDuration: .15,
     slices: {
       Fire: { source: 'Scene', from: .03, to: .35 },
@@ -85,8 +109,11 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'sawnoff_animated.glb',
     rest: [.04, -.13, -.14],
     mount: { position: [0, 0, 0], rotationY: Math.PI, scale: .012 },
-    muzzleLocal: [0, 4.5, 50],
-    flashPower: 24,
+    muzzles: [{ nodeName: 'front', localPosition: [-.008, 4.186, 33.375] }],
+    flashScale: .27,
+    flashDuration: .062,
+    flashOpacity: .95,
+    flashLightPower: 16,
     fireDuration: .36,
     slices: {
       Fire: { source: 'allanims', from: 0, to: .5 },
@@ -99,8 +126,14 @@ const RIG_CONFIGS: Record<WeaponId, WeaponRigConfig> = {
     asset: 'sawnoffs_animated.glb',
     rest: [0, -.12, -.16],
     mount: { position: [0, 0, 0], rotationY: Math.PI, scale: .011 },
-    muzzleLocal: [12, 4.5, 49],
-    flashPower: 24,
+    muzzles: [
+      { nodeName: 'front', localPosition: [.002, 3.58, 29.211] },
+      { nodeName: 'front_2', localPosition: [-.001, 3.594, 29.211] },
+    ],
+    flashScale: .25,
+    flashDuration: .058,
+    flashOpacity: .95,
+    flashLightPower: 15,
     fireDuration: .26,
     slices: {
       Fire: { source: 'CINEMA_4D_Main', from: 0, to: .38 },
@@ -120,14 +153,19 @@ interface LoadedRig {
   model: THREE.Object3D;
   mixer: THREE.AnimationMixer;
   clips: Map<string, THREE.AnimationClip>;
-  muzzleAnchor: THREE.Object3D;
+  muzzleAnchors: THREE.Object3D[];
 }
 
 export class WeaponView {
   private readonly loader = new GLTFLoader();
   private readonly root = new THREE.Group();
   private readonly muzzle = new THREE.Object3D();
-  private readonly flash = new THREE.PointLight(0xffbe79, 0, 5, 2);
+  private readonly muzzleFlash = new THREE.Group();
+  private readonly flashTexture = createMuzzleFlashTexture();
+  private readonly flashMaterial: THREE.MeshBasicMaterial;
+  private readonly flashGeometries: THREE.BufferGeometry[] = [];
+  private readonly flashLight = new THREE.SpotLight(0xffb86b, 0, 12, Math.PI / 2.6, .85, 1.8);
+  private readonly flashTarget = new THREE.Object3D();
   private readonly fallback = new THREE.Group();
   private readonly rigs = new Map<WeaponId, LoadedRig>();
   private readonly loading = new Map<WeaponId, Promise<void>>();
@@ -135,8 +173,11 @@ export class WeaponView {
   private current?: THREE.AnimationAction;
   private queue: Motion[] = [];
   private fireToggle = 0;
+  private activeBarrelIndex = 0;
   private recoil = 0;
   private flashTimer = 0;
+  private flashDuration = RIG_CONFIGS[DEFAULT_WEAPON].flashDuration;
+  private flashJitter = 1;
   private equipDip = 0;
   private disposed = false;
   private readonly camera: THREE.Camera;
@@ -144,6 +185,7 @@ export class WeaponView {
   private readonly targetRest = new THREE.Vector3(...RIG_CONFIGS[DEFAULT_WEAPON].rest);
   private readonly lastCamera = new THREE.Vector3();
   private readonly cameraPosition = new THREE.Vector3();
+  private readonly tmpWorld = new THREE.Vector3();
   private hasLastCamera = false;
   private speed = 0;
   private bobPhase = 0;
@@ -154,9 +196,49 @@ export class WeaponView {
     this.camera = camera;
     this.root.name = 'weapon-view';
     this.root.position.copy(this.currentRest);
+
     this.muzzle.name = 'weapon-muzzle';
-    this.muzzle.position.set(.09, .035, -.56);
-    this.muzzle.add(this.flash);
+    this.muzzleFlash.name = 'weapon-muzzle-flash';
+    this.muzzleFlash.visible = false;
+    this.flashMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd28a,
+      map: this.flashTexture,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+      toneMapped: true,
+    });
+
+    const starGeo = new THREE.PlaneGeometry(1, 1);
+    const starMesh = new THREE.Mesh(starGeo, this.flashMaterial);
+    starMesh.frustumCulled = false;
+
+    const finHorizontalGeo = new THREE.PlaneGeometry(.55, 1.35);
+    finHorizontalGeo.rotateX(Math.PI / 2);
+    const finHorizontal = new THREE.Mesh(finHorizontalGeo, this.flashMaterial);
+    finHorizontal.position.set(0, 0, -.56);
+    finHorizontal.frustumCulled = false;
+
+    const finVerticalGeo = new THREE.PlaneGeometry(.55, 1.35);
+    finVerticalGeo.rotateX(Math.PI / 2);
+    finVerticalGeo.rotateZ(Math.PI / 2);
+    const finVertical = new THREE.Mesh(finVerticalGeo, this.flashMaterial);
+    finVertical.position.set(0, 0, -.56);
+    finVertical.frustumCulled = false;
+
+    this.flashGeometries.push(starGeo, finHorizontalGeo, finVerticalGeo);
+    this.muzzleFlash.add(starMesh, finHorizontal, finVertical);
+    this.muzzle.add(this.muzzleFlash);
+
+    this.flashLight.name = 'weapon-flash-light';
+    this.flashLight.castShadow = false;
+    this.flashLight.visible = false;
+    this.flashTarget.name = 'weapon-flash-target';
+    this.flashTarget.position.set(0, -.04, -12);
+    this.flashLight.target = this.flashTarget;
 
     const receiver = new THREE.Mesh(
       new THREE.BoxGeometry(.085, .085, .37),
@@ -164,8 +246,9 @@ export class WeaponView {
     );
     receiver.position.set(.09, -.025, -.24);
     this.fallback.add(receiver);
-    this.root.add(this.fallback, this.muzzle);
-    camera.add(this.root);
+    this.root.add(this.fallback);
+    camera.add(this.root, this.muzzle, this.flashLight, this.flashTarget);
+    this.syncMuzzleToActiveAnchor();
 
     this.ensureRigLoaded(DEFAULT_WEAPON);
   }
@@ -178,6 +261,11 @@ export class WeaponView {
     this.current = undefined;
     this.recoil = 0;
     this.flashTimer = 0;
+    this.activeBarrelIndex = 0;
+    this.muzzleFlash.visible = false;
+    this.flashMaterial.opacity = 0;
+    this.flashLight.visible = false;
+    this.flashLight.intensity = 0;
     this.equipDip = 1;
     this.fireToggle = 0;
 
@@ -189,15 +277,17 @@ export class WeaponView {
     const ready = this.rigs.get(id);
     if (ready) {
       this.activateRig(ready);
+      this.syncMuzzleToActiveAnchor();
       return;
     }
 
-    this.root.add(this.fallback, this.muzzle);
-    this.muzzle.position.set(.09, .035, -.56);
+    this.root.add(this.fallback);
+    this.syncMuzzleToActiveAnchor();
     this.ensureRigLoaded(id);
   }
 
   update(dt: number): void {
+    const config = RIG_CONFIGS[this.activeId];
     const activeRig = this.rigs.get(this.activeId);
     activeRig?.mixer.update(dt);
     this.recoil *= Math.exp(-14 * dt);
@@ -218,17 +308,44 @@ export class WeaponView {
       run * .08,
       -side * 2.6 + run * .14,
     );
+    this.syncMuzzleToActiveAnchor();
+
     this.flashTimer = Math.max(0, this.flashTimer - dt);
-    this.flash.intensity = this.flashTimer > 0 ? RIG_CONFIGS[this.activeId].flashPower : 0;
+    if (this.flashTimer > 0) {
+      const t = this.flashTimer / Math.max(.001, this.flashDuration);
+      this.muzzleFlash.visible = true;
+      this.muzzleFlash.scale.setScalar(config.flashScale * this.flashJitter * (.72 + .35 * t));
+      this.flashMaterial.opacity = config.flashOpacity * (t ** 1.3);
+      this.flashLight.visible = true;
+      this.flashLight.intensity = config.flashLightPower * (t ** 1.6);
+    } else {
+      this.muzzleFlash.visible = false;
+      this.flashMaterial.opacity = 0;
+      this.flashLight.visible = false;
+      this.flashLight.intensity = 0;
+    }
   }
 
   fire(): void {
     const config = RIG_CONFIGS[this.activeId];
-    this.recoil = 1;
-    this.flashTimer = .052;
+    const shotIndex = this.fireToggle++;
     const rig = this.rigs.get(this.activeId);
-    const useAlt = rig?.clips.has('FireAlt') && this.fireToggle++ % 2 === 1;
+    this.activeBarrelIndex = rig && rig.muzzleAnchors.length > 0 ? shotIndex % rig.muzzleAnchors.length : 0;
+    const useAlt = rig?.clips.has('FireAlt') && shotIndex % 2 === 1;
+
+    this.recoil = 1;
+    this.flashDuration = config.flashDuration;
+    this.flashTimer = config.flashDuration;
+    this.flashJitter = .85 + Math.random() * .32;
+    this.muzzleFlash.rotation.z = Math.random() * Math.PI * 2;
+    this.muzzleFlash.visible = true;
+    this.muzzleFlash.scale.setScalar(config.flashScale * this.flashJitter);
+    this.flashMaterial.opacity = config.flashOpacity;
+    this.flashLight.visible = true;
+    this.flashLight.intensity = config.flashLightPower;
+
     this.playSequence([[useAlt ? 'FireAlt' : 'Fire', config.fireDuration]]);
+    this.syncMuzzleToActiveAnchor();
   }
 
   reload(rounds: number, emptyReload = false): void {
@@ -248,12 +365,19 @@ export class WeaponView {
   }
 
   muzzlePosition(target: THREE.Vector3): THREE.Vector3 {
+    this.syncMuzzleToActiveAnchor();
     return this.muzzle.getWorldPosition(target);
   }
 
   dispose(): void {
     this.disposed = true;
     this.root.removeFromParent();
+    this.muzzle.removeFromParent();
+    this.flashLight.removeFromParent();
+    this.flashTarget.removeFromParent();
+    for (const geometry of this.flashGeometries) geometry.dispose();
+    this.flashMaterial.dispose();
+    this.flashTexture.dispose();
     for (const rig of this.rigs.values()) {
       rig.mixer.stopAllAction();
       rig.mixer.uncacheRoot(rig.model);
@@ -262,6 +386,25 @@ export class WeaponView {
     this.rigs.clear();
     this.loading.clear();
     this.disposeModel(this.fallback);
+  }
+
+  private syncMuzzleToActiveAnchor(): void {
+    this.camera.updateMatrixWorld(true);
+    const rig = this.rigs.get(this.activeId);
+    if (rig && rig.muzzleAnchors.length > 0) {
+      const anchor = rig.muzzleAnchors[this.activeBarrelIndex % rig.muzzleAnchors.length];
+      anchor.getWorldPosition(this.tmpWorld);
+      this.camera.worldToLocal(this.tmpWorld);
+    } else {
+      this.tmpWorld.set(
+        this.currentRest.x + .09,
+        this.currentRest.y + .035,
+        this.currentRest.z - .56,
+      );
+    }
+    this.muzzle.position.copy(this.tmpWorld);
+    // Place the spot light strictly ahead of the muzzle so it never backlights the gun or hands.
+    this.flashLight.position.set(this.tmpWorld.x, this.tmpWorld.y, this.tmpWorld.z - FLASH_FORWARD_OFFSET);
   }
 
   private ensureRigLoaded(id: WeaponId): void {
@@ -284,6 +427,7 @@ export class WeaponView {
         this.root.add(rig.mount);
         if (this.activeId === id) {
           this.activateRig(rig);
+          this.syncMuzzleToActiveAnchor();
         } else {
           rig.mount.visible = false;
         }
@@ -324,6 +468,9 @@ export class WeaponView {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) {
         if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+        if (material instanceof THREE.MeshPhysicalMaterial && material.ior > 2.5) {
+          material.ior = 1.5;
+        }
         material.fog = false;
         material.emissive.setHex(0xc8d9ea);
         material.emissiveMap = material.map;
@@ -338,22 +485,32 @@ export class WeaponView {
     mixer.update(0);
     model.updateMatrixWorld(true);
 
-    // Measure SPAS-12 barrel anchor before parenting under mount so world coordinates match REST/camera.
-    const muzzleAnchor = new THREE.Object3D();
-    muzzleAnchor.name = `weapon-muzzle-${id}`;
+    const muzzleAnchors: THREE.Object3D[] = [];
     if (id === 'pistol') {
+      const anchor = new THREE.Object3D();
+      anchor.name = 'weapon-muzzle-pistol';
       const barrel = model.getObjectByName('DEF-Weapon_09');
       if (barrel) {
-        muzzleAnchor.position.copy(barrel.worldToLocal(new THREE.Vector3(-.28, 3.53, 2.145)));
-        barrel.add(muzzleAnchor);
+        anchor.position.copy(barrel.worldToLocal(new THREE.Vector3(-.28, 3.53, 2.245)));
+        barrel.add(anchor);
       } else {
-        model.add(muzzleAnchor);
+        model.add(anchor);
       }
-    } else if (config.muzzleLocal) {
-      muzzleAnchor.position.set(...config.muzzleLocal);
-      model.add(muzzleAnchor);
+      muzzleAnchors.push(anchor);
+    } else if (config.muzzles && config.muzzles.length > 0) {
+      config.muzzles.forEach((spec, index) => {
+        const anchor = new THREE.Object3D();
+        anchor.name = `weapon-muzzle-${id}-${index}`;
+        anchor.position.set(...spec.localPosition);
+        const targetNode = model.getObjectByName(spec.nodeName) ?? model;
+        targetNode.add(anchor);
+        muzzleAnchors.push(anchor);
+      });
     } else {
-      model.add(muzzleAnchor);
+      const anchor = new THREE.Object3D();
+      anchor.name = `weapon-muzzle-${id}`;
+      model.add(anchor);
+      muzzleAnchors.push(anchor);
     }
     mixer.stopAllAction();
 
@@ -363,7 +520,7 @@ export class WeaponView {
     mount.position.set(...config.mount.position);
     mount.add(model);
 
-    const rig: LoadedRig = { id, mount, model, mixer, clips, muzzleAnchor };
+    const rig: LoadedRig = { id, mount, model, mixer, clips, muzzleAnchors };
     mixer.addEventListener('finished', (event) => {
       if (this.activeId === id && event.action === this.current) this.advance();
     });
@@ -372,8 +529,6 @@ export class WeaponView {
 
   private activateRig(rig: LoadedRig): void {
     rig.mount.visible = true;
-    rig.muzzleAnchor.add(this.muzzle);
-    this.muzzle.position.set(0, 0, 0);
     this.fallback.removeFromParent();
     rig.mixer.stopAllAction();
     this.current = undefined;
@@ -471,6 +626,38 @@ export class WeaponView {
     for (const geometry of geometries) geometry.dispose();
     for (const material of materials) material.dispose();
   }
+}
+
+function createMuzzleFlashTexture(size = 64): THREE.DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const ny = (y / (size - 1)) * 2 - 1;
+    for (let x = 0; x < size; x++) {
+      const nx = (x / (size - 1)) * 2 - 1;
+      const r = Math.hypot(nx, ny);
+      const theta = Math.atan2(ny, nx);
+      const spike = .45 + .55 * Math.pow(Math.max(0, Math.cos(5 * theta + .3)), 2);
+      const core = Math.exp(-r * r * 14);
+      const edge = clamp01((.94 - r) / .72);
+      const smoothEdge = edge * edge * (3 - 2 * edge);
+      const alpha = r >= .95 ? 0 : Math.min(1, core * 1.15 + smoothEdge * spike * .72);
+      const hot = clamp01(core * 1.4);
+      const idx = (y * size + x) * 4;
+      data[idx] = Math.round(255);
+      data[idx + 1] = Math.round(168 + 80 * hot);
+      data[idx + 2] = Math.round(64 + 161 * hot);
+      data[idx + 3] = Math.round(255 * alpha);
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 /**
