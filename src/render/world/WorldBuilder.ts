@@ -4,7 +4,7 @@ import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
 import { CollisionMask } from './collisionMask.ts';
-import { landmark, streetLamps } from './props.ts';
+import { landmark, mountPharmacyInterior, mountRefugeStation, streetLamps } from './props.ts';
 
 /** street.glb ground mesh: its road sits up to 0.85 m below the sidewalks. */
 const GROUND_MESH = /^Plane\.?002(?:_|$)/i;
@@ -13,6 +13,15 @@ const ROAD_SURFACE_Y = -0.04;
 /** Props taller than this above the ground block the player (same band as the map generator). */
 const BODY_BAND = { low: 0.1, high: 1.9 };
 const LAMP_POLE_HALF = 0.08;
+const MIN_SURVIVOR_CLEARANCE = 0.85;
+const DYNAMIC_LANDMARK_PARTS = new Set([
+  'extraction-lens',
+  'radio-indicator',
+  'radio-screen',
+  'zone-light-refuge',
+  'zone-light-extraction',
+  'refuge-work-light',
+]);
 
 function freezeTransform(obj: THREE.Object3D): void {
   obj.updateMatrix();
@@ -48,7 +57,12 @@ export class WorldBuilder {
     } else {
       this.buildBlocks(map);
     }
-    this.addStreetFixtures(map);
+    const hasRefuge = map.cells.some((c) => c.type === 'refuge');
+    const [pharmacy, generator] = await Promise.all([
+      map.id === 'map_street' ? this.loadPharmacyInterior() : Promise.resolve(undefined),
+      hasRefuge ? this.loadPortableGenerator() : Promise.resolve(undefined),
+    ]);
+    this.addStreetFixtures(map, pharmacy, generator);
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
@@ -134,11 +148,34 @@ export class WorldBuilder {
     }
   }
 
-  private addStreetFixtures(map: MapDefinition): void {
+  private async loadPharmacyInterior(): Promise<THREE.Group | undefined> {
+    try {
+      const url = import.meta.env.BASE_URL + 'assets/props/pharmacy_interior.glb';
+      return (await new GLTFLoader().loadAsync(url)).scene;
+    } catch (error) {
+      console.warn('[WorldBuilder] Could not load the pharmacy interior.', error);
+      return undefined;
+    }
+  }
+
+  private async loadPortableGenerator(): Promise<THREE.Group | undefined> {
+    try {
+      const url = import.meta.env.BASE_URL + 'assets/props/portable_generator.glb';
+      return (await new GLTFLoader().loadAsync(url)).scene;
+    } catch (error) {
+      console.warn('[WorldBuilder] Could not load the portable generator.', error);
+      return undefined;
+    }
+  }
+
+  private addStreetFixtures(map: MapDefinition, pharmacy?: THREE.Group, generator?: THREE.Group): void {
     const walkable = createWalkableLookup(map);
     const edges: Edge[] = [];
+    const clinic = pharmacy ? map.cells.find(cell => cell.type === 'pharmacy') : undefined;
     for (const cell of map.cells) {
       if (!cell.walkable) continue;
+      if (clinic && cell.row >= clinic.row - 5 && cell.row <= clinic.row + 1 &&
+        cell.col >= clinic.col - 2 && cell.col <= clinic.col + 3) continue;
       const side = sides.find(d => !walkable({ row: cell.row + d.row, col: cell.col + d.col }));
       if (side) edges.push({ cell, side });
     }
@@ -156,9 +193,28 @@ export class WorldBuilder {
     for (const kind of ['pharmacy', 'refuge', 'extraction'] as const) {
       const cell = kind === 'extraction' ? map.extractionPoint : map.cells.find(c => c.type === kind);
       if (!cell) continue;
-      const edge = edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
       const model = landmark(kind);
-      place(model, edge, 0.09);
+      if (kind === 'refuge') mountRefugeStation(model, generator);
+      const edge = kind === 'refuge'
+        ? this.selectRefugeEdge(edges, cell, map, walkable, model, place)
+        : edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
+      if (kind === 'pharmacy' && pharmacy) {
+        const entranceCell = { row: cell.row - 6, col: cell.col };
+        const entrance = gridToWorld(entranceCell, map);
+        model.position.set(entrance.x, 0, entrance.z + 0.58);
+        model.rotation.y = Math.PI;
+        const room = mountPharmacyInterior(model, pharmacy);
+        const roomCenter = gridToWorld(cell, map);
+        room.position.set(roomCenter.x, 0, roomCenter.z);
+        room.rotation.y = -Math.PI / 2;
+        this.root.add(room);
+        this.collidables.push(room);
+        reserved.push(entranceCell);
+      } else {
+        place(model, edge, 0.09);
+        this.blockProp(model);
+        reserved.push(edge.cell);
+      }
       this.root.add(model);
       this.collidables.push(model);
       if (kind === 'extraction') {
@@ -168,10 +224,8 @@ export class WorldBuilder {
         ring.position.set(center.x, 0.045, center.z);
       }
       model.traverse(obj => {
-        if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
+        if (!DYNAMIC_LANDMARK_PARTS.has(obj.name)) freezeTransform(obj);
       });
-      this.blockProp(model);
-      reserved.push(edge.cell);
     }
 
     // Put each lamp in the widest remaining gap between light pools.
@@ -198,10 +252,52 @@ export class WorldBuilder {
     }
   }
 
+  /** Chooses the closest wall edge that leaves survivor-radio unobstructed at refugePosition. */
+  private selectRefugeEdge(
+    edges: readonly Edge[],
+    cell: GridCoord,
+    map: MapDefinition,
+    walkable: (coord: GridCoord) => boolean,
+    model: THREE.Object3D,
+    place: (model: THREE.Object3D, edge: Edge, inset: number) => void,
+  ): Edge {
+    const survivor = gridToWorld(cell, map);
+    const candidates = [...edges].sort((a, b) => distanceSq(a.cell, cell) - distanceSq(b.cell, cell));
+    const clearance = (edge: Edge): number => {
+      place(model, edge, 0.09);
+      model.updateWorldMatrix(true, true);
+      const box = new THREE.Box3();
+      let min = Infinity;
+      model.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        box.setFromObject(obj);
+        if (box.max.y < BODY_BAND.low || box.min.y > BODY_BAND.high) return;
+        const cx = Math.max(box.min.x, Math.min(survivor.x, box.max.x));
+        const cz = Math.max(box.min.z, Math.min(survivor.z, box.max.z));
+        min = Math.min(min, Math.hypot(survivor.x - cx, survivor.z - cz));
+      });
+      return min;
+    };
+    const hasFlanks = (edge: Edge): boolean => {
+      const rotY = Math.atan2(-edge.side.col, -edge.side.row);
+      const dx = Math.round(Math.cos(rotY));
+      const dz = Math.round(-Math.sin(rotY));
+      return (
+        walkable({ row: edge.cell.row + dz, col: edge.cell.col + dx }) &&
+        walkable({ row: edge.cell.row - dz, col: edge.cell.col - dx })
+      );
+    };
+    const preferred = candidates.find(
+      (edge) => distanceSq(edge.cell, cell) > 0 && hasFlanks(edge) && clearance(edge) >= MIN_SURVIVOR_CLEARANCE,
+    );
+    if (preferred) return preferred;
+    return candidates.find((edge) => clearance(edge) >= MIN_SURVIVOR_CLEARANCE) ?? candidates[0];
+  }
+
   /** Stamps the body-height parts of a runtime prop into the player collision mask. */
   private blockProp(model: THREE.Object3D): void {
     if (!this.collision) return;
-    model.updateMatrixWorld(true);
+    model.updateWorldMatrix(true, true);
     const box = new THREE.Box3();
     model.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;

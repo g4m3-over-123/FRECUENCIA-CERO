@@ -5269,7 +5269,7 @@
     {
       "row": 10,
       "col": 31,
-      "type": "pharmacy",
+      "type": "street",
       "walkable": true,
       "cost": 1
     },
@@ -12125,16 +12125,16 @@
     {
       "row": 24,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 24,
       "col": 53,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 24,
@@ -12146,23 +12146,23 @@
     {
       "row": 24,
       "col": 55,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 24,
       "col": 56,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 24,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 24,
@@ -12611,9 +12611,9 @@
     {
       "row": 25,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 25,
@@ -12646,9 +12646,9 @@
     {
       "row": 25,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 25,
@@ -13095,9 +13095,9 @@
     {
       "row": 26,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 26,
@@ -13130,9 +13130,9 @@
     {
       "row": 26,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 26,
@@ -13579,9 +13579,9 @@
     {
       "row": 27,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 27,
@@ -13614,9 +13614,9 @@
     {
       "row": 27,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 27,
@@ -14063,9 +14063,9 @@
     {
       "row": 28,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 28,
@@ -14084,23 +14084,23 @@
     {
       "row": 28,
       "col": 55,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 28,
       "col": 56,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 28,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 28,
@@ -14552,9 +14552,9 @@
     {
       "row": 29,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 29,
@@ -14566,7 +14566,7 @@
     {
       "row": 29,
       "col": 54,
-      "type": "street",
+      "type": "pharmacy",
       "walkable": true,
       "cost": 1
     },
@@ -14587,9 +14587,9 @@
     {
       "row": 29,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 29,
@@ -15031,44 +15031,44 @@
     {
       "row": 30,
       "col": 52,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,
       "col": 53,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,
       "col": 54,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,
       "col": 55,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,
       "col": 56,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,
       "col": 57,
-      "type": "street",
-      "walkable": true,
-      "cost": 1
+      "type": "building",
+      "walkable": false,
+      "cost": 999
     },
     {
       "row": 30,

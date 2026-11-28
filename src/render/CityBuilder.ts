@@ -274,7 +274,9 @@ export class CityBuilder {
       const zone = light.name.startsWith('zone-light-');
       const end = new THREE.Vector3(source.x, 0.03, source.z);
       if (end.y >= source.y) continue;
-      const beam = this.makeBeam(source, end, zone ? 1.6 : 2.15, light.color);
+      const pharmacy = light.name === 'zone-light-pharmacy';
+      const beam = this.makeBeam(source, end, pharmacy ? 1.15 : zone ? 1.6 : 2.15, light.color,
+        pharmacy ? 0.05 : 0.08);
       this.effects.add(beam);
       this.materials.add(beam.material);
 
@@ -287,7 +289,7 @@ export class CityBuilder {
       bulb.scale.setScalar(zone ? 0.095 : 0.075);
 
       if (light.name === 'zone-light-pharmacy') {
-        light.parent?.localToWorld(bulb.position.set(0, 2.53, 0.169));
+        light.parent?.getObjectByName('pharmacy-sign')?.localToWorld(bulb.position.set(0, 0, 0.169));
       } else if (light.name === 'zone-light-refuge') {
         light.parent?.localToWorld(bulb.position.set(0.31, 2.92, 0.069));
       } else if (light.name === 'zone-light-extraction') {
