@@ -7,6 +7,7 @@ import { gridToWorld } from '../../core/world/gridSpace.ts';
 import type { FrameState } from '../../game/GameLoop.ts';
 import type { AgentView } from '../../game/views.ts';
 import { AudioManager } from '../AudioManager.ts';
+import { explorerScreamAt } from './explorerScream.ts';
 
 const MODEL_FILES: Record<AgentRole, string> = {
   explorer: 'refugio_explorer.glb',
@@ -41,6 +42,7 @@ interface Body {
   health: number;
   alive: boolean;
   yaw: number;
+  screamId?: string;
 }
 
 function motionFor(state: AgentState, moving: boolean): string {
@@ -121,7 +123,14 @@ export class AgentCapsules implements AgentView {
       }
       body.group.rotation.y = body.yaw;
 
-      if (body.model) this.animate(body, state, moving, dt, state === 'stunned' && agent.health < body.health);
+      const previousScreamId = body.screamId;
+      if (state !== 'alert' || moving) body.screamId = undefined;
+      else if (!frame.current.paused) {
+        body.screamId = explorerScreamAt(agent, frame.current.soundEvents)?.id ?? body.screamId;
+      }
+      const hit = state === 'stunned' && agent.health < body.health;
+      const newScream = body.screamId !== undefined && body.screamId !== previousScreamId;
+      if (body.model) this.animate(body, state, moving, dt, hit, newScream);
       else this.animateFallback(body.fallback, state);
       body.state = state;
       body.health = agent.health;
@@ -199,10 +208,13 @@ export class AgentCapsules implements AgentView {
     };
   }
 
-  private animate(body: Body, state: AgentState, moving: boolean, dt: number, restart: boolean): void {
+  private animate(body: Body, state: AgentState, moving: boolean, dt: number, hit: boolean, newScream: boolean): void {
     const model = body.model!;
-    const name = motionFor(state, moving);
-    const clip = model.clips.get(name) ?? model.clips.get('idle');
+    const scream = body.screamId === undefined ? undefined : model.clips.get('scream');
+    const screamTime = scream ? model.mixer.existingAction(scream)?.time ?? 0 : 0;
+    const screaming = scream !== undefined && (newScream || screamTime < scream.duration);
+    const clip = screaming ? scream : model.clips.get(motionFor(state, moving)) ?? model.clips.get('idle');
+    const restart = hit || (screaming && newScream);
     if (clip && (restart || model.action?.getClip() !== clip)) {
       const action = model.mixer.clipAction(clip);
       const loop = LOOPS.has(clip.name);
