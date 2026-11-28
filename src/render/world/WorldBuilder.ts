@@ -1,33 +1,24 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
-import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
+import type { CellType, GridCoord, MapDefinition } from '../../core/contracts.ts';
+import { getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
-import { CollisionMask } from './collisionMask.ts';
-import { landmark, streetLamps } from './props.ts';
+/**
+ * Phase 0 world: places the map's GLB exactly where the grid generator measured it
+ * (map.world.asset) or, when a map has no asset, raises simple blocks from the grid.
+ * Front A (world) owns this file: zone lighting, scene presets, props, performance.
+ */
 
-/** street.glb ground mesh: its road sits up to 0.85 m below the sidewalks. */
-const GROUND_MESH = /^Plane\.?002(?:_|$)/i;
-/** The game treats the ground as flat at Y = 0, so the sunken road is raised to this height. */
-const ROAD_SURFACE_Y = -0.04;
-/** Props taller than this above the ground block the player (same band as the map generator). */
-const BODY_BAND = { low: 0.1, high: 1.9 };
-const LAMP_POLE_HALF = 0.08;
-
-function freezeTransform(obj: THREE.Object3D): void {
-  obj.updateMatrix();
-  obj.matrixAutoUpdate = false;
-}
-
-const sides = [{ row: -1, col: 0 }, { row: 1, col: 0 }, { row: 0, col: -1 }, { row: 0, col: 1 }];
-type Edge = { cell: GridCoord; side: GridCoord };
-const distanceSq = (a: GridCoord, b: GridCoord) => (a.row - b.row) ** 2 + (a.col - b.col) ** 2;
+const ZONE_LIGHTS: Partial<Record<CellType, { color: number; intensity: number }>> = {
+  pharmacy: { color: 0x4dff9a, intensity: 14 },
+  refuge: { color: 0xffb066, intensity: 16 },
+  extraction: { color: 0xff3b3b, intensity: 18 },
+};
 
 export class WorldBuilder {
   readonly root = new THREE.Group();
   private readonly collidables: THREE.Object3D[] = [];
   private gridOverlay: THREE.Group | null = null;
-  private collision: CollisionMask | null = null;
 
   constructor(private readonly scene: THREE.Scene) {
     this.root.name = 'world';
@@ -37,10 +28,7 @@ export class WorldBuilder {
   async build(map: MapDefinition): Promise<void> {
     if (map.world?.asset) {
       try {
-        [, this.collision] = await Promise.all([
-          this.loadAsset(map),
-          CollisionMask.load(`${import.meta.env.BASE_URL}maps/${map.id}.collision.json`),
-        ]);
+        await this.loadAsset(map);
       } catch (error) {
         console.warn(`[WorldBuilder] Could not load ${map.world.asset.url}; using grid blocks.`, error);
         this.buildBlocks(map);
@@ -48,15 +36,10 @@ export class WorldBuilder {
     } else {
       this.buildBlocks(map);
     }
-    this.addStreetFixtures(map);
+    this.addZoneLights(map);
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
-  }
-
-  /** Fine player collision for the GLB map, or null to collide with whole grid cells. */
-  getPlayerCollision(): CollisionMask | null {
-    return this.collision;
   }
 
   /** Meshes that stop bullets (used by the weapon raycast). */
@@ -73,23 +56,15 @@ export class WorldBuilder {
 
   private async loadAsset(map: MapDefinition): Promise<void> {
     const asset = map.world!.asset!;
-    const assetUrl = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(asset.url)
-      ? asset.url
-      : `${import.meta.env.BASE_URL}${asset.url.replace(/^\//, '')}`;
-    const gltf = await new GLTFLoader().loadAsync(assetUrl);
+    const gltf = await new GLTFLoader().loadAsync(asset.url);
     const model = gltf.scene;
     model.position.set(asset.offset[0], asset.offset[1], asset.offset[2]);
-    model.scale.setScalar(asset.scale ?? 1);
+    if (asset.scale) model.scale.setScalar(asset.scale);
     model.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
-        obj.castShadow = !/^Plane\.?(002|009|01[0-5])(?:_|$)/i.test(obj.name);
+        obj.castShadow = true;
         obj.receiveShadow = true;
       }
-      freezeTransform(obj);
-    });
-    model.updateMatrixWorld(true);
-    model.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && GROUND_MESH.test(obj.name)) raiseRoad(obj);
     });
     this.root.add(model);
     this.collidables.push(model);
@@ -134,81 +109,18 @@ export class WorldBuilder {
     }
   }
 
-  private addStreetFixtures(map: MapDefinition): void {
-    const walkable = createWalkableLookup(map);
-    const edges: Edge[] = [];
+  private addZoneLights(map: MapDefinition): void {
+    const placed = new Set<CellType>();
     for (const cell of map.cells) {
-      if (!cell.walkable) continue;
-      const side = sides.find(d => !walkable({ row: cell.row + d.row, col: cell.col + d.col }));
-      if (side) edges.push({ cell, side });
+      const zone = ZONE_LIGHTS[cell.type];
+      if (!zone || placed.has(cell.type)) continue;
+      placed.add(cell.type);
+      const p = gridToWorld(cell, map);
+      const light = new THREE.PointLight(zone.color, zone.intensity, 12 * map.cellSize, 1.6);
+      light.position.set(p.x, 3, p.z);
+      light.name = `zone-light-${cell.type}`;
+      this.root.add(light);
     }
-    if (!edges.length) return;
-
-    const place = (model: THREE.Object3D, { cell, side }: Edge, inset: number) => {
-      const center = gridToWorld(cell, map);
-      const offset = map.cellSize / 2 - inset;
-      model.position.set(center.x + side.col * offset, 0, center.z + side.row * offset);
-      model.rotation.y = Math.atan2(-side.col, -side.row);
-      model.updateMatrix();
-    };
-
-    const reserved: GridCoord[] = [];
-    for (const kind of ['pharmacy', 'refuge', 'extraction'] as const) {
-      const cell = kind === 'extraction' ? map.extractionPoint : map.cells.find(c => c.type === kind);
-      if (!cell) continue;
-      const edge = edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
-      const model = landmark(kind);
-      place(model, edge, 0.09);
-      this.root.add(model);
-      this.collidables.push(model);
-      if (kind === 'extraction') {
-        const ring = model.getObjectByName('extraction-ring')!;
-        const center = gridToWorld(cell, map);
-        this.root.add(ring);
-        ring.position.set(center.x, 0.045, center.z);
-      }
-      model.traverse(obj => {
-        if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
-      });
-      this.blockProp(model);
-      reserved.push(edge.cell);
-    }
-
-    // Put each lamp in the widest remaining gap between light pools.
-    const sites = edges.map(edge => ({ edge, clearance: Math.min(...reserved.map(c => distanceSq(c, edge.cell))) }));
-    const mounts: THREE.Matrix4[] = [];
-    const placement = new THREE.Object3D();
-    for (let i = 0; i < 6; i++) {
-      const site = sites.reduce((best, s) => s.clearance > best.clearance ? s : best);
-      if (site.clearance * map.cellSize ** 2 < 9) break;
-      place(placement, site.edge, 0.06);
-      mounts.push(placement.matrix.clone());
-      for (const s of sites) s.clearance = Math.min(s.clearance, distanceSq(s.edge.cell, site.edge.cell));
-    }
-    if (mounts.length) {
-      const pole = new THREE.Vector3();
-      for (const mount of mounts) {
-        pole.setFromMatrixPosition(mount);
-        this.collision?.stamp(pole.x - LAMP_POLE_HALF, pole.z - LAMP_POLE_HALF, pole.x + LAMP_POLE_HALF, pole.z + LAMP_POLE_HALF);
-      }
-      const lamps = streetLamps(mounts);
-      lamps.traverse(freezeTransform);
-      this.root.add(lamps);
-      this.collidables.push(lamps);
-    }
-  }
-
-  /** Stamps the body-height parts of a runtime prop into the player collision mask. */
-  private blockProp(model: THREE.Object3D): void {
-    if (!this.collision) return;
-    model.updateMatrixWorld(true);
-    const box = new THREE.Box3();
-    model.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return;
-      box.setFromObject(obj);
-      if (box.max.y < BODY_BAND.low || box.min.y > BODY_BAND.high) return;
-      this.collision!.stamp(box.min.x, box.min.z, box.max.x, box.max.z);
-    });
   }
 
   private createGridOverlay(map: MapDefinition): THREE.Group {
@@ -235,23 +147,4 @@ export class WorldBuilder {
     make(map.cells.filter((c) => !c.walkable), 0xef4444);
     return group;
   }
-}
-
-/** Lifts every ground vertex below ROAD_SURFACE_Y up to it, in world space. */
-function raiseRoad(mesh: THREE.Mesh): void {
-  const geometry = mesh.geometry.clone();
-  const position = geometry.getAttribute('position') as THREE.BufferAttribute;
-  const toLocal = mesh.matrixWorld.clone().invert();
-  const v = new THREE.Vector3();
-  for (let i = 0; i < position.count; i++) {
-    v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
-    if (v.y >= ROAD_SURFACE_Y) continue;
-    v.y = ROAD_SURFACE_Y;
-    v.applyMatrix4(toLocal);
-    position.setXYZ(i, v.x, v.y, v.z);
-  }
-  position.needsUpdate = true;
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  mesh.geometry = geometry;
 }

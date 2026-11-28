@@ -23,16 +23,6 @@ export interface WorldPickup {
   collected: boolean;
 }
 
-export type LootKind = 'ammo' | 'medkit';
-
-export interface LootPickup {
-  id: string;
-  kind: LootKind;
-  amount: number;
-  position: GridCoord;
-  collected: boolean;
-}
-
 export interface AgentSpawnConfig {
   id: string;
   role: AgentRole;
@@ -45,7 +35,6 @@ export interface SceneLayout {
   pharmacyPosition: GridCoord;
   extractionPosition: GridCoord;
   pickups: WorldPickup[];
-  lootPickups: LootPickup[];
   agents: AgentSpawnConfig[];
 }
 
@@ -114,44 +103,6 @@ function sameCoord(a: GridCoord, b: GridCoord): boolean {
   return a.row === b.row && a.col === b.col;
 }
 
-function coordKey(coord: GridCoord): string {
-  return `${coord.row},${coord.col}`;
-}
-
-/** Computes BFS-reachable walkable cells and hop distances from origin on the graph. */
-export function computeReachableDistances(
-  graph: WeightedGraph,
-  origin: GridCoord
-): { reachable: GridCoord[]; distances: Map<string, number>; maxDistance: number } {
-  const distances = new Map<string, number>();
-  const reachable: GridCoord[] = [];
-  let maxDistance = 0;
-
-  if (!graph.isWalkable(origin)) {
-    return { reachable, distances, maxDistance };
-  }
-
-  const queue: GridCoord[] = [{ ...origin }];
-  distances.set(coordKey(origin), 0);
-
-  for (let i = 0; i < queue.length; i++) {
-    const current = queue[i];
-    const currentDist = distances.get(coordKey(current))!;
-    reachable.push(current);
-    if (currentDist > maxDistance) maxDistance = currentDist;
-
-    for (const edge of graph.getNeighbors(current)) {
-      if (!graph.isWalkable(edge.to)) continue;
-      const key = coordKey(edge.to);
-      if (distances.has(key)) continue;
-      distances.set(key, currentDist + 1);
-      queue.push({ ...edge.to });
-    }
-  }
-
-  return { reachable, distances, maxDistance };
-}
-
 function findClosestCellOfType(
   map: MapDefinition,
   type: MapDefinition['cells'][number]['type'],
@@ -174,29 +125,22 @@ function buildLocalPatrolWaypoints(
   origin: GridCoord,
   walkableCells: readonly GridCoord[],
   safeAvoid: GridCoord,
-  rng: SeededRng,
-  scale = 1
+  rng: SeededRng
 ): GridCoord[] {
-  const minDist = 2 * scale;
-  const maxDist = 6 * scale;
-  const avoidDist = 3 * scale;
   const nearby = walkableCells.filter(
     (cell) =>
-      gridDistance(origin, cell) >= minDist &&
-      gridDistance(origin, cell) <= maxDist &&
-      gridDistance(cell, safeAvoid) >= avoidDist
+      gridDistance(origin, cell) >= 2 &&
+      gridDistance(origin, cell) <= 6 &&
+      gridDistance(cell, safeAvoid) >= 3
   );
 
-  const pool =
-    nearby.length >= 3
-      ? [...nearby]
-      : walkableCells.filter((c) => gridDistance(c, safeAvoid) >= Math.max(2, scale));
+  const pool = nearby.length >= 3 ? [...nearby] : walkableCells.filter((c) => gridDistance(c, safeAvoid) >= 2);
   rng.shuffle(pool);
 
   const waypoints: GridCoord[] = [{ ...origin }];
   for (const candidate of pool) {
     if (waypoints.length >= 4) break;
-    if (waypoints.every((wp) => gridDistance(wp, candidate) >= minDist)) {
+    if (waypoints.every((wp) => gridDistance(wp, candidate) >= 2)) {
       waypoints.push({ ...candidate });
     }
   }
@@ -205,8 +149,8 @@ function buildLocalPatrolWaypoints(
 }
 
 /**
- * Dynamically derives key scene points, supply pickups, loot, and safe anti-omniscience spawns
- * for any valid MapDefinition (10x10, 20x20, 32x32, 50x50, or map_street).
+ * Dynamically derives key scene points, supply pickups, and safe anti-omniscience spawns
+ * for any valid MapDefinition (10x10, 20x20, 32x32, 50x50).
  */
 export function buildSceneLayout(
   map: MapDefinition,
@@ -217,19 +161,14 @@ export function buildSceneLayout(
 ): SceneLayout {
   const preset = getScenePreset(sceneId);
   const opaqueCells = buildOpaqueCellSet(map);
-  const isFineGrid = map.cellSize <= 1;
-  const patrolScale = isFineGrid ? 2 : 1;
   const center: GridCoord = {
     row: Math.floor(map.height / 2),
     col: Math.floor(map.width / 2),
   };
 
-  const allWalkable: GridCoord[] = map.cells
+  const walkableCells: GridCoord[] = map.cells
     .filter((cell) => cell.walkable)
     .map((cell) => ({ row: cell.row, col: cell.col }));
-
-  const { reachable, distances, maxDistance } = computeReachableDistances(graph, map.spawnMara);
-  const walkableCells = reachable.length > 0 ? reachable : allWalkable;
 
   const refugePosition =
     findClosestCellOfType(map, 'refuge', map.spawnMara) ?? { ...map.spawnMara };
@@ -249,72 +188,27 @@ export function buildSceneLayout(
     pharmacyPosition,
     extractionPosition,
   ];
-  const isReserved = (cell: GridCoord): boolean => reserved.some((r) => sameCoord(r, cell));
 
-  const pharmacySteps = distances.get(coordKey(pharmacyPosition)) ?? 0;
-  const useCorridorPacing = maxDistance >= 24 || pharmacySteps >= 12;
-
-  const pickByCorridorOrAnchor = (
-    targetFraction: number,
-    anchor: GridCoord,
-    minDistFromSpawn: number,
-    avoidCells: readonly GridCoord[],
-    minAvoidDist: number
-  ): GridCoord => {
-    const unreserved = walkableCells.filter((cell) => !isReserved(cell));
-
-    if (useCorridorPacing) {
-      const targetSteps = Math.round(maxDistance * targetFraction);
-      const filterTier = (minSpawnSteps: number, gap: number): GridCoord[] =>
-        unreserved.filter(
-          (cell) =>
-            (distances.get(coordKey(cell)) ?? 0) >= minSpawnSteps &&
-            avoidCells.every((a) => gridDistance(cell, a) >= gap)
-        );
-
-      let pool = filterTier(minDistFromSpawn, minAvoidDist);
-      if (pool.length === 0) pool = filterTier(Math.floor(minDistFromSpawn * 0.5), 1);
-      if (pool.length === 0) pool = unreserved;
-
-      pool.sort((a, b) => {
-        const da = Math.abs((distances.get(coordKey(a)) ?? maxDistance) - targetSteps);
-        const db = Math.abs((distances.get(coordKey(b)) ?? maxDistance) - targetSteps);
-        return da - db || gridDistance(a, anchor) - gridDistance(b, anchor);
-      });
-
-      const chosen = pool[0] ?? walkableCells[walkableCells.length - 1] ?? { ...map.spawnMara };
-      reserved.push(chosen);
-      return { ...chosen };
-    }
-
-    const candidates = unreserved
-      .filter((cell) => gridDistance(cell, map.spawnMara) >= minDistFromSpawn)
+  const pickDistinctWalkable = (anchor: GridCoord, minDistFromSpawn: number): GridCoord => {
+    const candidates = walkableCells
+      .filter(
+        (cell) =>
+          gridDistance(cell, map.spawnMara) >= minDistFromSpawn &&
+          reserved.every((r) => !sameCoord(r, cell))
+      )
       .sort((a, b) => gridDistance(a, anchor) - gridDistance(b, anchor));
 
-    const chosen = candidates[0] ?? unreserved[0] ?? walkableCells[walkableCells.length - 1] ?? { ...map.spawnMara };
+    const chosen = candidates[0] ?? walkableCells[walkableCells.length - 1] ?? { ...map.spawnMara };
     reserved.push(chosen);
     return { ...chosen };
   };
 
-  const fuelMinSpawn = useCorridorPacing
-    ? Math.min(pharmacySteps + 2, Math.max(0, maxDistance - 4))
-    : Math.min(3, Math.floor(map.width / 3));
-  const fuelPosition = pickByCorridorOrAnchor(0.62, center, fuelMinSpawn, [extractionPosition], 4);
-
+  const fuelPosition = pickDistinctWalkable(center, Math.min(3, Math.floor(map.width / 3)));
   const batteryAnchor: GridCoord = {
     row: Math.min(map.height - 1, Math.floor(map.height * 0.65)),
     col: Math.min(map.width - 1, Math.floor(map.width * 0.65)),
   };
-  const batteryMinSpawn = useCorridorPacing
-    ? Math.min(pharmacySteps + 4, Math.max(0, maxDistance - 3))
-    : Math.min(4, Math.floor(map.width / 2));
-  const batteryPosition = pickByCorridorOrAnchor(
-    0.82,
-    batteryAnchor,
-    batteryMinSpawn,
-    [extractionPosition, fuelPosition],
-    4
-  );
+  const batteryPosition = pickDistinctWalkable(batteryAnchor, Math.min(4, Math.floor(map.width / 2)));
 
   const pickups: WorldPickup[] = [
     {
@@ -337,64 +231,18 @@ export function buildSceneLayout(
     },
   ];
 
-  const lootSpecs: ReadonlyArray<{ kind: LootKind; amount: number; fraction: number }> =
-    walkableCells.length >= 100
-      ? [
-          { kind: 'ammo', amount: 12, fraction: 0.18 },
-          { kind: 'medkit', amount: 35, fraction: 0.36 },
-          { kind: 'ammo', amount: 12, fraction: 0.54 },
-          { kind: 'medkit', amount: 35, fraction: 0.72 },
-          { kind: 'ammo', amount: 12, fraction: 0.88 },
-        ]
-      : walkableCells.length >= 12
-        ? [
-            { kind: 'ammo', amount: 12, fraction: 0.35 },
-            { kind: 'medkit', amount: 35, fraction: 0.65 },
-          ]
-        : [];
-
-  const lootPickups: LootPickup[] = [];
-  const lootSpacing = 3 * patrolScale;
-  for (let i = 0; i < lootSpecs.length; i++) {
-    const spec = lootSpecs[i];
-    const unreserved = walkableCells.filter((cell) => !isReserved(cell));
-    if (unreserved.length === 0) break;
-
-    const targetSteps = Math.max(1, Math.round(maxDistance * spec.fraction));
-    const spaced = unreserved.filter((cell) =>
-      lootPickups.every((existing) => gridDistance(cell, existing.position) >= lootSpacing)
-    );
-    const pool = spaced.length > 0 ? spaced : unreserved;
-    pool.sort((a, b) => {
-      const da = Math.abs((distances.get(coordKey(a)) ?? maxDistance) - targetSteps);
-      const db = Math.abs((distances.get(coordKey(b)) ?? maxDistance) - targetSteps);
-      return da - db || a.row - b.row || a.col - b.col;
-    });
-
-    const chosen = { ...pool[0] };
-    reserved.push(chosen);
-    lootPickups.push({
-      id: `loot-${spec.kind}-${i + 1}`,
-      kind: spec.kind,
-      amount: spec.amount,
-      position: chosen,
-      collected: false,
-    });
-  }
-
   if (customAgents) {
     return {
       refugePosition,
       pharmacyPosition,
       extractionPosition,
       pickups,
-      lootPickups,
       agents: customAgents.map((a) => ({
         ...a,
         position: { ...a.position },
         patrolWaypoints: a.patrolWaypoints
           ? a.patrolWaypoints.map((wp) => ({ ...wp }))
-          : buildLocalPatrolWaypoints(a.position, allWalkable, map.spawnMara, rng, patrolScale),
+          : buildLocalPatrolWaypoints(a.position, walkableCells, map.spawnMara, rng),
       })),
     };
   }
@@ -409,23 +257,12 @@ export function buildSceneLayout(
   ];
 
   // Filter infected spawn candidates outside initial LOS and safe distance from Mara's spawn.
-  const visionCheckRange = isFineGrid ? 11 : 6;
-  const minSpawnDist = isFineGrid
-    ? 10
-    : Math.max(4, Math.min(7, Math.floor(Math.min(map.width, map.height) * 0.45)));
-
+  const minSpawnDist = Math.max(4, Math.min(7, Math.floor(Math.min(map.width, map.height) * 0.45)));
   const stealthSafeCandidates = walkableCells.filter(
     (cell) =>
       gridDistance(cell, map.spawnMara) >= minSpawnDist &&
       !sameCoord(cell, refugePosition) &&
-      !hasLineOfSight(graph, cell, map.spawnMara, visionCheckRange, opaqueCells)
-  );
-
-  const midSafeCandidates = walkableCells.filter(
-    (cell) =>
-      gridDistance(cell, map.spawnMara) >= (isFineGrid ? 6 : 3) &&
-      !sameCoord(cell, refugePosition) &&
-      !hasLineOfSight(graph, cell, map.spawnMara, visionCheckRange, opaqueCells)
+      !hasLineOfSight(graph, cell, map.spawnMara, 6, opaqueCells)
   );
 
   const fallbackCandidates = walkableCells.filter(
@@ -434,23 +271,15 @@ export function buildSceneLayout(
       !sameCoord(cell, refugePosition)
   );
 
-  const spawnPool =
-    stealthSafeCandidates.length > 0
-      ? [...stealthSafeCandidates]
-      : midSafeCandidates.length > 0
-        ? [...midSafeCandidates]
-        : [...fallbackCandidates];
+  const spawnPool = stealthSafeCandidates.length > 0 ? [...stealthSafeCandidates] : [...fallbackCandidates];
   rng.shuffle(spawnPool);
 
-  const minSpacing = isFineGrid ? 3 : 2;
   const usedSpawns: GridCoord[] = [map.spawnMara, refugePosition];
   const takeSpawn = (): GridCoord | null => {
-    for (const spacing of [minSpacing, 2]) {
-      for (const candidate of spawnPool) {
-        if (usedSpawns.every((u) => gridDistance(u, candidate) >= spacing)) {
-          usedSpawns.push(candidate);
-          return { ...candidate };
-        }
+    for (const candidate of spawnPool) {
+      if (usedSpawns.every((u) => gridDistance(u, candidate) >= 2)) {
+        usedSpawns.push(candidate);
+        return { ...candidate };
       }
     }
     for (const candidate of spawnPool) {
@@ -475,7 +304,7 @@ export function buildSceneLayout(
       id: `explorer-${i}`,
       role: 'explorer',
       position: pos,
-      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
+      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng),
     });
   }
 
@@ -486,7 +315,7 @@ export function buildSceneLayout(
       id: `pursuer-${i}`,
       role: 'pursuer',
       position: pos,
-      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
+      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng),
     });
   }
 
@@ -495,7 +324,6 @@ export function buildSceneLayout(
     pharmacyPosition,
     extractionPosition,
     pickups,
-    lootPickups,
     agents,
   };
 }

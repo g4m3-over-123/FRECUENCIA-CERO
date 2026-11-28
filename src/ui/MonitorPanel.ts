@@ -75,16 +75,6 @@ const cellColors: Record<CellType, string> = {
   street: '#252d3b', sidewalk: '#4a566c', building: '#151c29', obstacle: '#9c6657',
   barricade: '#e5ac73', pharmacy: '#80d6a5', refuge: '#f0bf76', extraction: '#f3948c',
 };
-const roleColors = { explorer: '#a3e635', pursuer: '#f87171', radio_survivor: '#60a5fa' };
-const CELL_PX = 10;
-
-/** Optional telemetry the engine adds on top of AgentSnapshot (ExtendedAgentSnapshot). */
-interface LiveAgentExtras {
-  currentPath?: GridCoord[];
-  knownBlockedCells?: GridCoord[];
-  planChanges?: number;
-}
-
 const numberFormat = new Intl.NumberFormat('es', { maximumFractionDigits: 3 });
 const coordinate = (value: GridCoord): string => `${value.row}, ${value.col}`;
 const flag = (value: boolean | undefined): string => value === undefined ? '—' : value ? 'Sí' : 'No';
@@ -111,7 +101,6 @@ export class MonitorPanel {
   private telemetry: MonitorTelemetry = {};
   private requestedMap?: AbortController;
   private map?: MapDefinition;
-  private baseMap?: HTMLCanvasElement;
   private logSignature = '';
   private agentSignature = '';
   private outcome: 'playing' | 'victory' | 'defeat' = 'playing';
@@ -153,8 +142,7 @@ export class MonitorPanel {
           <div class="monitor-map-frame"><canvas class="monitor-map" width="250" height="250" role="img" aria-label="Mapa cenital del sector"></canvas></div>
           <p class="monitor-meta" data-field="map-status" role="status">Cargando mapa…</p>
           <ul class="monitor-legend" aria-label="Leyenda del mapa">
-            <li class="spawn">Mara</li><li class="pharmacy">Farmacia</li><li class="refuge">Refugio</li><li class="extraction">Extracción</li>
-            <li class="explorer">Explorador</li><li class="pursuer">Perseguidor</li><li class="barricade">Barricada</li>
+            <li class="spawn">Inicio</li><li class="pharmacy">Farmacia</li><li class="refuge">Refugio</li><li class="extraction">Extracción</li>
           </ul>
         </section>
 
@@ -184,8 +172,6 @@ export class MonitorPanel {
             <dt>Costo</dt><dd data-field="cost">—</dd>
             <dt>Nodos expandidos</dt><dd data-field="expanded">—</dd>
             <dt>Tiempo de búsqueda</dt><dd data-field="duration">—</dd>
-            <dt>Replanificaciones</dt><dd data-field="replans">—</dd>
-            <dt>Bloqueos que cree</dt><dd data-field="believed-blocked">—</dd>
           </dl>
           <details class="monitor-route"><summary>Ruta actual</summary><p data-field="route">—</p></details>
         </section>
@@ -279,7 +265,6 @@ export class MonitorPanel {
     this.setAgents(snapshot.agents);
     this.updateInspector();
     this.updateLog(snapshot);
-    this.drawLive(snapshot);
     this.audio.update(snapshot);
 
     if (outcome !== this.outcome && outcome !== 'playing') {
@@ -318,10 +303,7 @@ export class MonitorPanel {
       button.setAttribute('aria-pressed', String(muted));
       button.textContent = muted ? 'Activar audio' : 'Silenciar audio';
     });
-    this.agentSelect.addEventListener('change', () => {
-      this.updateInspector();
-      if (this.snapshot) this.drawLive(this.snapshot);
-    });
+    this.agentSelect.addEventListener('change', () => this.updateInspector());
     this.mapSelect.addEventListener('change', () => void this.selectMap(this.mapSelect.value as MonitorMapId, true));
     this.dialogAction.addEventListener('click', () => {
       this.dialog.close();
@@ -383,73 +365,19 @@ export class MonitorPanel {
     }
   }
 
-  /** Static layer (cells) drawn once per map into an offscreen canvas. */
   private drawMap(map: MapDefinition): void {
-    const base = document.createElement('canvas');
-    base.width = map.width * CELL_PX;
-    base.height = map.height * CELL_PX;
-    const context = base.getContext('2d');
+    const context = this.mapCanvas.getContext('2d');
     if (!context) return;
+    this.mapCanvas.width = map.width * 10;
+    this.mapCanvas.height = map.height * 10;
+    this.mapCanvas.setAttribute('aria-label', `${map.name}, mapa de ${map.width} por ${map.height} celdas`);
     for (const cell of map.cells) {
       context.fillStyle = cellColors[cell.type];
-      context.fillRect(cell.col * CELL_PX, cell.row * CELL_PX, CELL_PX - 0.5, CELL_PX - 0.5);
+      context.fillRect(cell.col * 10, cell.row * 10, 9.5, 9.5);
     }
-    this.baseMap = base;
-    this.mapCanvas.width = base.width;
-    this.mapCanvas.height = base.height;
-    this.mapCanvas.setAttribute('aria-label', `${map.name}, mapa de ${map.width} por ${map.height} celdas`);
-    if (this.snapshot) this.drawLive(this.snapshot);
-    else {
-      this.mapCanvas.getContext('2d')?.drawImage(base, 0, 0);
-      this.dot(map.spawnMara, '#a9e7ff', 4.5);
-    }
-  }
-
-  /** Live layer: barricades, agents (selected one with its path) and Mara. */
-  private drawLive(snapshot: WorldSnapshot): void {
-    const context = this.mapCanvas.getContext('2d');
-    const map = this.map;
-    if (!context || !this.baseMap || !map) return;
-    context.drawImage(this.baseMap, 0, 0);
-    const inside = (p: GridCoord): boolean => p.row >= 0 && p.col >= 0 && p.row < map.height && p.col < map.width;
-
-    const barricades = (snapshot as { barricades?: GridCoord[] }).barricades ?? [];
-    context.fillStyle = cellColors.barricade;
-    for (const b of barricades) if (inside(b)) context.fillRect(b.col * CELL_PX, b.row * CELL_PX, CELL_PX - 0.5, CELL_PX - 0.5);
-
-    const selected = snapshot.agents.find(({ id }) => id === this.agentSelect.value) as (AgentSnapshot & LiveAgentExtras) | undefined;
-    if (selected?.currentPath && selected.currentPath.length > 1 && selected.state !== 'dead') {
-      context.strokeStyle = roleColors[selected.role];
-      context.lineWidth = 2;
-      context.beginPath();
-      selected.currentPath.forEach((p, i) => {
-        const x = p.col * CELL_PX + CELL_PX / 2;
-        const y = p.row * CELL_PX + CELL_PX / 2;
-        if (i === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.stroke();
-    }
-    for (const agent of snapshot.agents) {
-      if (!inside(agent.position)) continue;
-      this.dot(agent.position, agent.state === 'dead' ? '#55606f' : roleColors[agent.role], agent.id === selected?.id ? 5 : 3.5);
-    }
-    if (selected && selected.state !== 'dead') {
-      context.strokeStyle = '#ffffff';
-      context.lineWidth = 1.5;
-      context.beginPath();
-      context.arc(selected.position.col * CELL_PX + CELL_PX / 2, selected.position.row * CELL_PX + CELL_PX / 2, 7.5, 0, Math.PI * 2);
-      context.stroke();
-    }
-    if (inside(snapshot.mara.position)) this.dot(snapshot.mara.position, '#a9e7ff', 5);
-  }
-
-  private dot(cell: GridCoord, color: string, radius: number): void {
-    const context = this.mapCanvas.getContext('2d');
-    if (!context) return;
-    context.fillStyle = color;
+    context.fillStyle = '#a9e7ff';
     context.beginPath();
-    context.arc(cell.col * CELL_PX + CELL_PX / 2, cell.row * CELL_PX + CELL_PX / 2, radius, 0, Math.PI * 2);
+    context.arc(map.spawnMara.col * 10 + 5, map.spawnMara.row * 10 + 5, 4.5, 0, Math.PI * 2);
     context.fill();
   }
 
@@ -479,11 +407,6 @@ export class MonitorPanel {
     this.set('expanded', search?.expandedCount.toString());
     this.set('duration', search && `${numberFormat.format(search.executionTimeMs)} ms`);
     this.set('route', search && (search.found ? search.path.map(coordinate).join(' → ') : 'Sin ruta'));
-    const extras = agent as (AgentSnapshot & LiveAgentExtras) | undefined;
-    this.set('replans', extras?.planChanges?.toString());
-    this.set('believed-blocked', extras?.knownBlockedCells
-      ? (extras.knownBlockedCells.length ? extras.knownBlockedCells.slice(0, 4).map(coordinate).join(' · ') + (extras.knownBlockedCells.length > 4 ? ` (+${extras.knownBlockedCells.length - 4})` : '') : 'Ninguno')
-      : undefined);
     const comparison = data?.comparison;
     this.set('comparison', comparison ? `${coordinate(comparison.origin)} → ${coordinate(comparison.destination)}` : 'Sin búsquedas comparables.');
     this.setSearchRow('dijkstra', comparison?.dijkstra);

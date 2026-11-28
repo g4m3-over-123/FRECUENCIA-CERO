@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { CellType, GridCoord, MapDefinition } from '../src/core/contracts.ts';
 import { GUNSHOT_SOURCE_ID } from '../src/core/contracts.ts';
@@ -84,10 +84,9 @@ describe('gridSpace', () => {
 describe('map_street.json', () => {
   const map = loadMap('map_street');
 
-  it('is a valid map aligned with the packaged street asset', () => {
+  it('is a valid map aligned with street.glb', () => {
     expect(map.cells).toHaveLength(map.width * map.height);
-    expect(map.world?.asset?.url).toBe('/assets/props/street_enhanced.glb');
-    expect(existsSync(resolve(process.cwd(), 'public', map.world!.asset!.url.slice(1)))).toBe(true);
+    expect(map.world?.asset?.url).toBe('/assets/props/street.glb');
     expect(map.world?.asset?.offset).toHaveLength(3);
     for (const type of ['refuge', 'pharmacy', 'extraction'] as const) {
       expect(map.cells.some((c) => c.type === type && c.walkable)).toBe(true);

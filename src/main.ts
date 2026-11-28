@@ -91,7 +91,6 @@ async function bootstrap(): Promise<void> {
   const player = new PlayerController(sceneManager, map, (command) => loop.send(command), {
     isDynamicallyBlocked: (cell) => barricades.has(key(cell)),
     canSprint: () => loop.latest().mara.stamina >= 8,
-    collision: world.getPlayerCollision(),
   });
   const weapon = new WeaponController(
     sceneManager,
