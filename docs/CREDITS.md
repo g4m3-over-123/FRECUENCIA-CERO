@@ -5,15 +5,18 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 | Archivo | Origen (URL) | Autor | Licencia | Agregado por |
 | --- | --- | --- | --- | --- |
 | `public/assets/props/street.glb` | pendiente | pendiente | pendiente | Diego |
-| `public/assets/props/street_felipe.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/props/abandoned_city_street_for_games.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/dual_mac10_smg_-_animated.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/fps_character_animation_pack_saps-12.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/m4_-_fps_weapon_animations_pack_v.1.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/persuader_animated.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/sawnoff_animated.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/weapons/sawnoffs_animated.glb` | pendiente | pendiente | pendiente | Felipe |
-| `public/assets/characters/william_birkin_stage.glb` | pendiente | pendiente | pendiente | Felipe |
+| `public/assets/props/street_felipe.glb` | [Street](https://sketchfab.com/3d-models/street-00735f501b484e528717d6229a34232d) | Pasha | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Felipe |
+| `public/assets/props/abandoned_city_street_for_games.glb` | [abandoned city street for games](https://sketchfab.com/3d-models/abandoned-city-street-for-games-0232bce6a27d477c947b6ef4e985fff2) | dasy444 | [Sketchfab Standard](https://sketchfab.com/licenses) | Felipe |
+| `public/assets/weapons/dual_mac10_smg_-_animated.glb` | [Dual Mac10 SMG - Animated](https://sketchfab.com/3d-models/dual-mac10-smg-animated-9a98526e69894b80a99ef328e889080f) | user77 | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | Felipe |
+| `public/assets/weapons/fps_character_animation_pack_saps-12.glb` | [FPS Character Animation Pack Saps-12](https://sketchfab.com/3d-models/fps-character-animation-pack-saps-12-3e5ebbd4ace24f2e92eadb7252927b31) | Cristian David Duque Camacho | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Felipe |
+| `public/assets/weapons/m4_-_fps_weapon_animations_pack_v.1.glb` | [M4 - FPS Weapon Animations Pack (v.1)](https://sketchfab.com/3d-models/m4-fps-weapon-animations-pack-v1-662fc74dda2646cfb48fc610705768ef) | BarcodeGames | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Felipe |
+| `public/assets/weapons/persuader_animated.glb` | [persuader animated](https://sketchfab.com/3d-models/persuader-animated-c915c024e4e44d9fad250242d094d4e2) | DJMaesen | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) | Felipe |
+| `public/assets/weapons/sawnoff_animated.glb` | [sawnoff animated](https://sketchfab.com/3d-models/sawnoff-animated-806f8327bed34fc3b0e3911d01f0566d) | DJMaesen | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Felipe |
+| `public/assets/weapons/sawnoffs_animated.glb` | [sawnoffs Animated](https://sketchfab.com/3d-models/sawnoffs-animated-001bec4277414a62bb8ad9b2a1a7abcb) | DJMaesen | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Felipe |
+| `public/assets/characters/william_birkin_stage.glb` | [William Birkin Stage](https://sketchfab.com/3d-models/william-birkin-stage-4de37fecb6804c87a2203fe090eac03b) | Vasian-Digital3D | [Sketchfab Standard](https://sketchfab.com/licenses) | Felipe |
+| `public/assets/characters/refugio_explorer.glb` | [Mixamo](https://www.mixamo.com/), Zombie Woman y animaciones | Adobe Mixamo | [Uso integrado en videojuegos sin regalías](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html) | Diego |
+| `public/assets/characters/refugio_pursuer.glb` | [Mixamo](https://www.mixamo.com/), Zombie Police y animaciones | Adobe Mixamo | [Uso integrado en videojuegos sin regalías](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html) | Diego |
+| `public/assets/characters/refugio_radio_survivor.glb` | [Mixamo](https://www.mixamo.com/), Ch31 Survivor y animaciones (modelo del Acto II de `c7e89fd`) | Adobe Mixamo | [Uso integrado en videojuegos sin regalías](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html) | Diego |
 | Otros WAV en `public/assets/audio/` | pendiente | pendiente | pendiente | Physanto |
 | `public/assets/audio/growl.wav` | https://opengameart.org/content/zombies-sound-pack | artisticdude | CC0 1.0 (Public Domain) | marlon890 |
 | `public/assets/audio/zombie_growl_2.wav` | https://opengameart.org/content/zombies-sound-pack | artisticdude | CC0 1.0 (Public Domain) | marlon890 |
@@ -46,6 +49,7 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 
 ## Notas
 
+- Las atribuciones de Sketchfab conservan las licencias de los metadatos de los GLB originales. [Sketchfab Standard](https://sketchfab.com/licenses) restringe la redistribución del modelo como archivo independiente. [Adobe Mixamo](https://community.adobe.com/questions-696/mixamo-faq-licensing-royalties-ownership-eula-and-tos-589400) restringe la distribución pública de sus archivos fuente de personajes y animaciones.
 - Los GLB de Felipe se comprimieron al mezclarlos: texturas a 2048 px como maximo y en WebP (`EXT_texture_webp`, Three.js lo carga sin configurar nada). Mallas, esqueletos y animaciones no cambiaron.
 - `m4_-_fps_weapon_animations_pack_v.1.glb` usaba `KHR_materials_pbrSpecularGlossiness`, que Three.js ya no soporta. Se convirtio a metal/rugosidad (`gltf-transform metalrough`); mallas y animaciones no cambiaron.
 - `william_birkin_stage.glb` pasaba de 44 MB a 14 MB: texturas repetidas eliminadas, animacion remuestreada y texturas en WebP. Mallas, esqueleto y animacion no cambiaron.
