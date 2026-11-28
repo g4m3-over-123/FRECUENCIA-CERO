@@ -24,8 +24,7 @@ const ROLE_COLOR: Record<AgentRole, number> = {
 const LOOPS = new Set(['idle', 'walk', 'run']);
 /** Scales the 1.68-1.89 m models down to read as average adults next to the player's eye height. */
 const CHARACTER_SCALE = .9;
-// The survivor's idle pose keeps the boots slightly above the model origin.
-const SURVIVOR_FOOT_OFFSET = .025;
+const SURVIVOR_HALF_WIDTH = .42;
 
 interface ModelInstance {
   root: THREE.Object3D;
@@ -67,9 +66,26 @@ function industrialRadioSpot(scene: THREE.Scene, map: MapDefinition) {
   const walkable = createWalkableLookup(map);
   const forward = radio.getWorldDirection(new THREE.Vector3());
   const yaw = Math.atan2(forward.x, forward.z);
-  for (const [side, front] of [[.96, .62], [-1.06, .62], [0, 1.1]]) {
-    const position = radio.localToWorld(new THREE.Vector3(side, -SURVIVOR_FOOT_OFFSET, front));
-    if (walkable(worldToGrid(position, map))) return { position, yaw };
+  radio.updateWorldMatrix(true, true);
+  const fixtures: THREE.Box3[] = [];
+  radio.traverse((part) => {
+    if (part instanceof THREE.Mesh) fixtures.push(new THREE.Box3().setFromObject(part));
+  });
+
+  const positions = [[.96, .62], [-1.06, .62], [0, 1.1]].map(([side, front]) =>
+    radio.localToWorld(new THREE.Vector3(side, 0, front)));
+  const refuge = map.cells.find((cell) => cell.type === 'refuge');
+  if (refuge) {
+    const { x, z } = gridToWorld(refuge, map);
+    positions.unshift(new THREE.Vector3(x, 0, z));
+  }
+
+  const stance = new THREE.Box3();
+  for (const position of positions) {
+    if (!walkable(worldToGrid(position, map))) continue;
+    stance.min.set(position.x - SURVIVOR_HALF_WIDTH, .06, position.z - SURVIVOR_HALF_WIDTH);
+    stance.max.set(position.x + SURVIVOR_HALF_WIDTH, 1.8, position.z + SURVIVOR_HALF_WIDTH);
+    if (!fixtures.some((bounds) => bounds.intersectsBox(stance))) return { position, yaw };
   }
   return undefined;
 }
@@ -225,13 +241,22 @@ export class AgentCapsules implements AgentView {
       meshes.push(object);
     });
     if (meshes.length === 0) return;
+
+    const mixer = new THREE.AnimationMixer(root);
+    const clips = new Map(asset.animations.map((clip) => [clip.name, clip]));
+    const idle = clips.get('idle');
+    if (body.role === 'radio_survivor' && this.radioSurvivorSpot && idle) {
+      const standing = mixer.clipAction(idle).play();
+      mixer.update(0);
+      root.updateWorldMatrix(true, true);
+      const feet = new THREE.Box3().setFromObject(root, true).min.y;
+      standing.stop();
+      if (Number.isFinite(feet)) root.position.y -= feet;
+    }
+
     body.fallback.removeFromParent();
     body.group.add(root);
-    body.model = {
-      root, meshes,
-      mixer: new THREE.AnimationMixer(root),
-      clips: new Map(asset.animations.map((clip) => [clip.name, clip])),
-    };
+    body.model = { root, meshes, mixer, clips };
   }
 
   private animate(body: Body, state: AgentState, moving: boolean, dt: number, hit: boolean, newScream: boolean): void {

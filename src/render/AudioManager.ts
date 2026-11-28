@@ -141,11 +141,14 @@ export class AudioManager {
   private ambientRequested = false;
   private unlocked = false;
   private muted = false;
+  private readonly unlockOnInput = (): void => this.unlock();
 
   constructor(private readonly cueForSound: (sound: SoundEvent) => SoundCue | undefined = defaultCue) {
     if (this.binding) {
       this.binding.player?.releaseSpatialAudio();
       this.binding.player = this;
+      window.addEventListener('keydown', this.unlockOnInput, true);
+      window.addEventListener('pointerup', this.unlockOnInput, true);
     }
   }
 
@@ -277,7 +280,9 @@ export class AudioManager {
       const repeated = this.playedSounds.has(sound.id);
       this.playedSounds.set(sound.id, snapshot.tick);
       // The local weapon already played the shot when the engine accepted it.
-      if (repeated || snapshot.paused || sound.sourceId === GUNSHOT_SOURCE_ID) continue;
+      if (repeated || sound.sourceId === GUNSHOT_SOURCE_ID) continue;
+      // The rescue cut pauses the simulation on the same tick as the signal.
+      if (snapshot.paused && sound.sourceId !== RADIO_EXTRACTION) continue;
       const cue = this.cueForSound(sound) ?? defaultCue(sound);
       if (!cue) continue;
       if (sound.sourceId === RADIO_GENERATOR) {
@@ -326,13 +331,23 @@ export class AudioManager {
       try {
         listener = new THREE.AudioListener();
       } catch {
+        this.stopWaitingForInput();
         return;
       }
       this.binding.camera.add(listener);
       this.listener = listener;
       for (const cue of preloadCues) void this.loadBuffer(cue, listener.context);
     }
-    if (listener.context.state === 'suspended') void listener.context.resume().catch(() => undefined);
+    if (listener.context.state === 'running') {
+      this.stopWaitingForInput();
+    } else if (listener.context.state === 'suspended') {
+      void listener.context.resume().then(() => this.stopWaitingForInput()).catch(() => undefined);
+    }
+  }
+
+  private stopWaitingForInput(): void {
+    window.removeEventListener('keydown', this.unlockOnInput, true);
+    window.removeEventListener('pointerup', this.unlockOnInput, true);
   }
 
   private playAt(cue: SoundCue, position?: THREE.Vector3, agentId?: string): void {
@@ -423,6 +438,7 @@ export class AudioManager {
   }
 
   private releaseSpatialAudio(): void {
+    this.stopWaitingForInput();
     if (this.binding?.player === this) this.binding.player = null;
     this.reset();
     this.stopAmbient();
