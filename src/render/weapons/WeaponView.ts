@@ -156,11 +156,7 @@ export class WeaponView {
     }
 
     const reload = this.clips.get('Reload')!;
-    const fps = 30;
-    for (const name of ['Insert0', 'Insert1']) {
-      this.clips.set(name, THREE.AnimationUtils.subclip(
-        reload, name, Math.round(INSERT_CLIP.from * fps), Math.round(INSERT_CLIP.to * fps), fps));
-    }
+    for (const name of ['Insert0', 'Insert1']) this.clips.set(name, trimClip(reload, name, INSERT_CLIP.from, INSERT_CLIP.to));
 
     const model = asset.scene;
     this.model = model;
@@ -252,3 +248,21 @@ export class WeaponView {
     for (const texture of textures) texture.dispose();
   }
 }
+
+/**
+ * Cuts [from, to] out of a clip keeping every track. AnimationUtils.subclip drops tracks with no
+ * key inside the range, which froze part of the left arm and left the hand short of the weapon.
+ */
+function trimClip(clip: THREE.AnimationClip, name: string, from: number, to: number): THREE.AnimationClip {
+  const tracks = clip.tracks.map((track) => {
+    const size = track.getValueSize();
+    const interpolant = track.createInterpolant();
+    const times = [from, ...Array.from(track.times).filter((t) => t > from && t < to), to];
+    const values = new Float32Array(times.length * size);
+    times.forEach((time, i) => values.set(interpolant.evaluate(time), i * size));
+    const TrackType = track.constructor as new (name: string, times: number[], values: Float32Array) => THREE.KeyframeTrack;
+    return new TrackType(track.name, times.map((time) => time - from), values);
+  });
+  return new THREE.AnimationClip(name, to - from, tracks);
+}
+
