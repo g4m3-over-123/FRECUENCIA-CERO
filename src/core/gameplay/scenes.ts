@@ -67,8 +67,8 @@ export const SCENE_PRESETS: ScenePreset[] = [
   {
     id: 2,
     name: 'La farmacia',
-    description: 'Recoleccion de medicamentos; una puerta metalica ruidosa activa alertas locales.',
-    objective: 'Recoge los medicamentos en la farmacia y sobrevive al ruido de la puerta metalica.',
+    description: 'Recoleccion de medicamentos; el ruido al mover suministros y escombros activa alertas locales.',
+    objective: 'Recoge los medicamentos en la farmacia y sobrevive a la alerta de la horda.',
     explorerCount: 2,
     pursuerCount: 2,
     hordeFlankingEnabled: true,
@@ -235,25 +235,54 @@ export function pickPharmacyWatchCells(
       !hasLineOfSight(graph, cell, pharmacy, visionRange, opaqueCells)
     );
   });
+  const relayRing = candidates.filter((cell) => {
+    const d = gridDistance(cell, pharmacy);
+    return (
+      d >= spacing.ringMin &&
+      d <= spacing.ringMax + spacing.chainMax &&
+      !hasLineOfSight(graph, cell, pharmacy, visionRange, opaqueCells)
+    );
+  });
   const chain: GridCoord[] = anchors.filter((a) => gridDistance(a, pharmacy) <= spacing.ringMax + spacing.chainMax);
   const chosen: GridCoord[] = [];
+  const tightChainMax = Math.max(4, spacing.chainMax - 3);
 
   while (chosen.length < count) {
     const links = [...chain, ...chosen];
-    const pool = ring.filter(
-      (cell) =>
-        [...links, ...others].every((u) => gridDistance(u, cell) >= Math.min(3, spacing.chainMin)) &&
-        (links.length === 0 ||
-          links.some((l) => {
-            const d = gridDistance(l, cell);
-            return d >= spacing.chainMin && d <= spacing.chainMax;
-          }))
-    );
+    const source = links.length === 0 ? ring : relayRing;
+    const match = (maxLink: number) =>
+      source.filter(
+        (cell) =>
+          [...links, ...others].every((u) => gridDistance(u, cell) >= Math.min(3, spacing.chainMin)) &&
+          (links.length === 0 ||
+            links.some((l) => {
+              const d = gridDistance(l, cell);
+              return d >= Math.min(4, spacing.chainMin) && d <= maxLink;
+            }))
+      );
+    const pool = match(tightChainMax).length > 0 ? match(tightChainMax) : match(spacing.chainMax);
     const spread = (cell: GridCoord): number => links.reduce((acc, l) => acc + gridDistance(l, cell), 0);
     pool.sort((a, b) => spread(b) - spread(a));
-    const pick = pool.find((cell) =>
-      hasEscapeRoute(graph, pharmacy, escapeGoal, [...links, ...others, cell], spacing.clearance)
-    );
+    const canChain = (cell: GridCoord): boolean =>
+      relayRing.some((other) => {
+        const d = gridDistance(cell, other);
+        return (
+          d >= Math.min(4, spacing.chainMin) &&
+          d <= tightChainMax &&
+          hasEscapeRoute(graph, pharmacy, escapeGoal, [...links, ...others, cell, other], spacing.clearance)
+        );
+      });
+    const pick =
+      (links.length === 0 && count > 1
+        ? pool.find(
+            (cell) =>
+              hasEscapeRoute(graph, pharmacy, escapeGoal, [...links, ...others, cell], spacing.clearance) &&
+              canChain(cell)
+          )
+        : undefined) ??
+      pool.find((cell) =>
+        hasEscapeRoute(graph, pharmacy, escapeGoal, [...links, ...others, cell], spacing.clearance)
+      );
     if (!pick) break;
     chosen.push({ ...pick });
   }
@@ -642,27 +671,90 @@ export function buildSceneLayout(
   const pursuerCount = Math.max(1, Math.round(preset.pursuerCount * scale));
 
   // Act I: explorers watch the pharmacy as an alert chain so the metal door relays visibly.
-  // They stay off the direct approach so a careful player can still sneak in.
+  // They stay off the direct approach and out of sight of it so a stealth player can sneak in.
   const hasPharmacy = sceneId <= 2 && map.cells.some((cell) => cell.type === 'pharmacy');
   const approach = hasPharmacy ? runAStar(graph, map.spawnMara, pharmacyPosition, 'octile').path : [];
-  const offApproach = spawnPool.filter((cell) =>
-    approach.every((step) => gridDistance(step, cell) >= spacing.ringMin - 3)
+  const unseenByApproach = (cell: GridCoord): boolean =>
+    approach.every(
+      (step) =>
+        gridDistance(step, cell) > visionCheckRange ||
+        !hasLineOfSight(graph, cell, step, visionCheckRange, opaqueCells)
+    );
+  const offApproach = spawnPool.filter(
+    (cell) =>
+      approach.every((step) => gridDistance(step, cell) >= spacing.ringMin - 3) &&
+      unseenByApproach(cell)
   );
-  const watchCells = hasPharmacy
-      ? pickPharmacyWatchCells(
-          graph,
-          opaqueCells,
-          pharmacyPosition,
-          extractionPosition,
-          offApproach,
-          [],
-          [],
-          explorerCount,
-          spacing,
-          visionCheckRange
-        )
-      : [];
+  const pharmacyDoorway = hasPharmacy ? escapeCorridorCells(graph, pharmacyPosition, extractionPosition, 8) : [];
+  const offDoorway = (cell: GridCoord): boolean =>
+    pharmacyDoorway.every((step) => gridDistance(step, cell) > spacing.clearance + 1);
+  let watchCells = hasPharmacy
+    ? pickPharmacyWatchCells(
+        graph,
+        opaqueCells,
+        pharmacyPosition,
+        extractionPosition,
+        offApproach.filter(offDoorway),
+        [],
+        [],
+        explorerCount,
+        spacing,
+        visionCheckRange
+      )
+    : [];
+  if (hasPharmacy && watchCells.length < explorerCount) {
+    const wider = spawnPool.filter(
+      (cell) =>
+        offDoorway(cell) &&
+        unseenByApproach(cell) &&
+        approach.every((step) => gridDistance(step, cell) >= Math.max(3, spacing.ringMin - 5))
+    );
+    const extra = pickPharmacyWatchCells(
+      graph,
+      opaqueCells,
+      pharmacyPosition,
+      extractionPosition,
+      wider,
+      watchCells,
+      [],
+      explorerCount - watchCells.length,
+      spacing,
+      visionCheckRange
+    );
+    watchCells = [...watchCells, ...extra];
+  }
   usedSpawns.push(...watchCells);
+
+  const actOnePatrolCells = hasPharmacy
+    ? walkableCells.filter(
+        (cell) =>
+          offDoorway(cell) &&
+          unseenByApproach(cell) &&
+          gridDistance(cell, pharmacyPosition) >= spacing.ringMin - 1
+      )
+    : walkableCells;
+  const safePatrolPool = actOnePatrolCells.length >= 6 ? actOnePatrolCells : walkableCells;
+  const actOnePursuerPool = hasPharmacy
+    ? spawnPool.filter(
+        (cell) =>
+          gridDistance(cell, pharmacyPosition) >= spacing.ringMax + 4 &&
+          offDoorway(cell) &&
+          unseenByApproach(cell)
+      )
+    : [];
+  const takeFromPool = (pool: readonly GridCoord[]): GridCoord | null => {
+    for (const gap of [minSpacing, 2]) {
+      for (const candidate of pool) {
+        if (usedSpawns.every((u) => gridDistance(u, candidate) >= gap)) {
+          usedSpawns.push(candidate);
+          return { ...candidate };
+        }
+      }
+    }
+    return null;
+  };
+  const takeActOnePursuer = (): GridCoord | null =>
+    (actOnePursuerPool.length > 0 ? takeFromPool(actOnePursuerPool) : null) ?? takeSpawn();
 
   // Act II: pursuers hold the middle band between the supplies and the refuge (the side doors).
   const refugeSteps = sceneId === 3 ? computeReachableDistances(graph, refugePosition).distances : null;
@@ -670,7 +762,7 @@ export function buildSceneLayout(
     ? Math.min(refugeSteps.get(coordKey(fuelPosition)) ?? 0, refugeSteps.get(coordKey(batteryPosition)) ?? 0)
     : 0;
   const takeMiddleSpawn = (): GridCoord | null => {
-    if (!refugeSteps || supplySteps === 0) return takeSpawn();
+    if (!refugeSteps || supplySteps === 0) return hasPharmacy ? takeActOnePursuer() : takeSpawn();
     for (const candidate of spawnPool) {
       const steps = refugeSteps.get(coordKey(candidate)) ?? 0;
       if (
@@ -687,15 +779,15 @@ export function buildSceneLayout(
 
   for (let i = 1; i <= explorerCount; i++) {
     const watcher = watchCells[i - 1];
-    const pos = watcher ?? takeSpawn();
+    const pos = watcher ?? (hasPharmacy ? takeActOnePursuer() : takeSpawn());
     if (!pos) break;
     agents.push({
       id: `explorer-${i}`,
       role: 'explorer',
       position: pos,
-      // Watchers patrol around the shop, never into it, so Mara can still sneak in and out.
+      // Watchers patrol tightly around their post, never into the shop or out of relay range.
       patrolWaypoints: watcher
-        ? buildLocalPatrolWaypoints(pos, walkableCells, pharmacyPosition, rng, 1, spacing.ringMin - 1)
+        ? buildLocalPatrolWaypoints(pos, safePatrolPool, pharmacyPosition, rng, 0.5, spacing.ringMin - 1)
         : buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
     });
   }
@@ -707,7 +799,9 @@ export function buildSceneLayout(
       id: `pursuer-${i}`,
       role: 'pursuer',
       position: pos,
-      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
+      patrolWaypoints: hasPharmacy
+        ? buildLocalPatrolWaypoints(pos, safePatrolPool, pharmacyPosition, rng, 1, spacing.ringMin - 1)
+        : buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
     });
   }
 

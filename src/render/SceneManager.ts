@@ -556,10 +556,7 @@ export class SceneManager {
   }
 
   private stepPreviewWalk(dt: number): void {
-    const isCrouching =
-      this.pressedKeys.has('ControlLeft') ||
-      this.pressedKeys.has('ControlRight') ||
-      this.pressedKeys.has('KeyC');
+    const isCrouching = this.pressedKeys.has('KeyC');
 
     let forwardInput = 0;
     let strafeInput = 0;

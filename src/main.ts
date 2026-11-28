@@ -37,7 +37,7 @@ const mapId = params.get('map') ?? 'map_street';
 const useMock = params.get('mock') === '1';
 const autostart = params.get('autostart') === '1';
 const seed = Number(params.get('seed') ?? 1337);
-const initialScene = parseScene(params.get('scene'));
+const initialScene = parseScene(params.get('scene'), mapId);
 const KNOWN_MAPS: readonly MonitorMapId[] = ['map_street', 'map_industrial', 'map_small', 'map_medium', 'map_large'];
 
 /** Act I (street + pharmacy) hands over to Act II (industrial complex, scene 3) at the avenue exit. */
@@ -45,9 +45,11 @@ const ACT_TRANSITION_MS = 3000;
 const RADIO_CUT_MS = 4000;
 const INTRO_CUT_MS = 3500;
 
-function parseScene(raw: string | null): SceneId {
-  const value = Number(raw ?? 1);
-  return (Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1) as SceneId;
+function parseScene(raw: string | null, map: string): SceneId {
+  const fallback: SceneId = map === 'map_industrial' ? 3 : 1;
+  if (raw === null || raw === '') return fallback;
+  const value = Number(raw);
+  return (Number.isInteger(value) && value >= 1 && value <= 5 ? value : fallback) as SceneId;
 }
 
 function actUrl(act: MonitorAct): string {
@@ -296,6 +298,7 @@ async function bootstrap(): Promise<void> {
       onMapChange: (next) => {
         const query = new URLSearchParams(window.location.search);
         query.set('map', next.id);
+        query.delete('scene');
         window.location.search = query.toString();
       },
       onActJump: (act) => window.location.assign(actUrl(act)),

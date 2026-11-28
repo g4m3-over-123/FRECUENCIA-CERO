@@ -90,21 +90,26 @@ export class WorldBuilder {
     const assetUrl = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(asset.url)
       ? asset.url
       : `${import.meta.env.BASE_URL}${asset.url.replace(/^\//, '')}`;
+    const isStreet = map.id === 'map_street';
     const gltf = await new GLTFLoader().loadAsync(assetUrl);
     const model = gltf.scene;
     model.position.set(asset.offset[0], asset.offset[1], asset.offset[2]);
     model.scale.setScalar(asset.scale ?? 1);
     model.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
-        obj.castShadow = !/^Plane\.?(002|009|01[0-5])(?:_|$)/i.test(obj.name);
+        obj.castShadow = isStreet
+          ? !/^Plane\.?(002|009|01[0-5])(?:_|$)/i.test(obj.name)
+          : !/^(?:Plane\.?002|Courtyard_Ground_Slab)(?:_|$)/i.test(obj.name);
         obj.receiveShadow = true;
       }
       freezeTransform(obj);
     });
     model.updateMatrixWorld(true);
-    model.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && GROUND_MESH.test(obj.name)) raiseRoad(obj);
-    });
+    if (isStreet) {
+      model.traverse((obj) => {
+        if (obj instanceof THREE.Mesh && GROUND_MESH.test(obj.name)) raiseRoad(obj);
+      });
+    }
     this.root.add(model);
     this.collidables.push(model);
   }

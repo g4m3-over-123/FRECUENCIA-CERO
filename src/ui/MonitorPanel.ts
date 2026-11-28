@@ -4,11 +4,11 @@ import type {
 import { AudioManager } from '../render/AudioManager.ts';
 
 const maps = {
-  map_street: 'Calle FPV (street.glb) · 46 × 56',
+  map_street: 'Distrito urbano (street_enhanced.glb) · 64 × 42',
+  map_industrial: 'Complejo industrial (Acto II) · 30 × 40',
   map_small: 'Barrio sur · 20 × 20',
   map_medium: 'Centro urbano · 32 × 32',
   map_large: 'Distrito industrial · 50 × 50',
-  map_industrial: 'Complejo industrial (Acto II)',
 } as const;
 
 export type MonitorMapId = keyof typeof maps;
@@ -88,8 +88,8 @@ export interface MonitorTelemetry {
 
 const scenes = {
   1: ['Ciudad silenciosa', 'Avanza por las calles sin llamar la atención.'],
-  2: ['La farmacia', 'Recoge los medicamentos y reacciona al ruido de la puerta.'],
-  3: ['La horda', 'Atraviesa el cruce y consigue el combustible.'],
+  2: ['La farmacia', 'Recoge los medicamentos; el ruido al mover suministros alerta a la horda.'],
+  3: ['La horda', 'Atraviesa el cruce industrial y consigue el combustible y la batería.'],
   4: ['El refugio', 'Instala la batería y activa la radio.'],
   5: ['Extracción', 'Alcanza la salida antes de que se cierre la ruta.'],
 } as const;
