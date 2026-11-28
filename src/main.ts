@@ -198,17 +198,18 @@ async function bootstrap(): Promise<void> {
   let introShown = false;
   let radioWasActive = loop.latest().radioActivated ?? false;
   let actTransition = false;
-  const playIntro = (): void => {
+  const playIntro = async (): Promise<void> => {
     if (introShown) return;
     introShown = true;
-    void panel.playCinematic(introCard(map.id, initialScene));
+    await panel.playCinematic(introCard(map.id, initialScene));
   };
 
-  const startGame = (): void => {
+  // The intro video plays first; the game starts only once it ends or is skipped.
+  const startGame = async (): Promise<void> => {
+    await playIntro();
     loop.start();
     setPlaying(true);
     sceneManager.lockPointer();
-    playIntro();
   };
 
   loop.onTick((snapshot) => {
@@ -262,14 +263,14 @@ async function bootstrap(): Promise<void> {
   const panel = new MonitorPanel(
     hudContainer,
     {
-      onStart: startGame,
+      onStart: () => void startGame(),
       onRestart: () => {
         comparisons.clear();
         if (source instanceof SimulationEngine) source.setScene(initialScene);
         loop.reset();
         radioWasActive = loop.latest().radioActivated ?? false;
         player.spawn(map.spawnMara);
-        startGame();
+        void startGame();
       },
       onPauseChange: (paused) => {
         source.setPaused(paused);
@@ -339,7 +340,7 @@ async function bootstrap(): Promise<void> {
     panel.closeDialog();
     loop.start();
     setPlaying(true);
-    playIntro();
+    void playIntro();
   }
 
   let lastStatus = loop.latest().status;

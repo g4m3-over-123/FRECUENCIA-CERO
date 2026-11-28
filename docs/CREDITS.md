@@ -63,3 +63,7 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 
 - Los cuatro cortes del guion (Inicio, Radio activada, Victoria y Derrota) y la transicion Acto I -> Acto II son tarjetas de texto en HTML/CSS (`MonitorPanel.playCinematic`). No usan assets externos; los textos son propios del equipo y se basan en `02_Cinematica_Prompts_y_Voces_Kokoro.md`.
 - Si se agrega un clip, va en `public/assets/cinematics/` con estos nombres: `intro.mp4` (Acto I), `act2.mp4` (Acto II), `victory.mp4` y `defeat.mp4`. Cada clip debe pesar menos de 10 MB (H.264) y anotarse en la tabla de arriba con su origen y licencia. Si el archivo no existe, se muestra la tarjeta de texto.
+
+## Cinematics
+
+- `public/assets/cinematics/intro.mp4`: intro video provided by the team (own material), re-encoded to H.264 1.7 Mbps to stay under 15 MB.

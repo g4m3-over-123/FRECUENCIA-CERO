@@ -219,7 +219,11 @@ body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-
   animation: cinematic-in .45s ease-out both;
 }
 .cinematic-card.is-leaving { animation: cinematic-out .35s ease-in both; }
-.cinematic-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cinematic-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.cinematic-card.has-video { background: #000; }
+.cinematic-card.has-video .cinematic-inner { display: none; }
+.cinematic-skip { position: absolute; right: 1.5rem; bottom: 1.5rem; z-index: 2; padding: .55rem 1.1rem; border: 1px solid rgba(255,255,255,.4); border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; font: inherit; cursor: pointer; }
+.cinematic-skip:hover { background: rgba(255,255,255,.15); }
 .cinematic-video + .cinematic-inner { align-self: end; }
 .cinematic-inner {
   position: relative;
