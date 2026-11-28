@@ -157,6 +157,7 @@ export type GameCommand =
   | { type: 'moveToCell'; cell: GridCoord; posture: MaraPosture; facing?: GridCoord }
   | { type: 'fire'; hitAgentId: string | null }
   | { type: 'reload' }
+  | { type: 'switchWeapon'; weaponId: string }
   | { type: 'decoy'; target?: GridCoord }
   | { type: 'barricade'; target?: GridCoord }
   | { type: 'interact' };

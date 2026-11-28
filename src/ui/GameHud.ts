@@ -1,4 +1,5 @@
 import type { ExtendedWorldSnapshot } from '../core/gameplay/SimulationEngine.ts';
+import { WEAPON_ORDER, getWeaponDefinition } from '../core/gameplay/weapons.ts';
 
 /**
  * FPS HUD: crosshair, health, stamina, ammo, scene objective, hit marker, damage flash,
@@ -9,12 +10,16 @@ const LOW_HEALTH = 30;
 export class GameHud {
   private readonly root = document.createElement('div');
   private readonly fields = new Map<string, HTMLElement>();
+  private readonly weaponSlots = new Map<string, HTMLElement>();
   private hitTimer = 0;
   private damageTimer = 0;
   private lastHealth: number | null = null;
 
   constructor(container: HTMLElement) {
     this.root.className = 'game-hud';
+    const slotsMarkup = WEAPON_ORDER
+      .map((id, i) => `<span class="hud-slot" data-weapon="${id}">${i + 1} ${getWeaponDefinition(id).shortLabel}</span>`)
+      .join('');
     this.root.innerHTML = `
       <div class="hud-damage" data-field="damage" aria-hidden="true"></div>
       <div class="hud-crosshair" aria-hidden="true"></div>
@@ -29,31 +34,39 @@ export class GameHud {
       </div>
       <div class="hud-bottom-right">
         <p class="hud-status" data-field="status" role="status"></p>
+        <p class="hud-weapon" data-field="weapon"></p>
         <p class="hud-ammo" data-field="ammo-row"><b data-field="ammo"></b><span data-field="reserve"></span></p>
+        <div class="hud-weapons" data-field="weapon-slots">${slotsMarkup}</div>
         <p class="hud-meta" data-field="tools"></p>
       </div>
       <div class="hud-lock" data-field="lock">
         <p><b>Haz clic para jugar</b></p>
-        <p>WASD mover · Shift correr (ruido) · C agacharse (silencio) · Clic disparar (mucho ruido) · R recargar</p>
+        <p>WASD mover · Shift correr (ruido) · C agacharse (silencio) · Clic disparar (mucho ruido) · R recargar · 1-6 / Rueda cambiar arma</p>
         <p>Q señuelo · E barricada · F linterna · Tab Rayos X (V enfocar agente) · G cuadrícula · M panel · P pausa · Esc liberar ratón</p>
       </div>`;
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-field]')) {
       this.fields.set(el.dataset.field!, el);
+    }
+    for (const el of this.root.querySelectorAll<HTMLElement>('[data-weapon]')) {
+      this.weaponSlots.set(el.dataset.weapon!, el);
     }
     container.appendChild(this.root);
   }
 
   update(snapshot: ExtendedWorldSnapshot, pointerLocked: boolean, dt: number): void {
     const { mara } = snapshot;
+    const def = getWeaponDefinition(mara.weapon.id);
     this.set('scene', `${snapshot.sceneId}. ${snapshot.sceneName}`);
     this.set('objective', snapshot.sceneObjective);
     this.set('health', String(Math.round(mara.health)));
     this.set('posture', mara.posture === 'stealth' ? 'sigilo' : mara.posture === 'sprint' ? 'corriendo' : 'caminando');
     (this.fields.get('health-bar') as HTMLMeterElement).value = mara.health;
     (this.fields.get('stamina-bar') as HTMLMeterElement).value = mara.stamina;
+    this.set('weapon', def.label);
     this.set('ammo', String(mara.weapon.ammoInMagazine));
     this.set('reserve', ` / ${mara.weapon.ammoReserve}`);
     this.set('tools', `Señuelos ${mara.decoysRemaining} · Barricadas ${mara.barricadesRemaining}`);
+    for (const [id, el] of this.weaponSlots) el.classList.toggle('active', id === mara.weapon.id);
 
     const { weapon } = mara;
     const ammoRow = this.fields.get('ammo-row')!;

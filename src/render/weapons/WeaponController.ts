@@ -1,10 +1,19 @@
 import * as THREE from 'three';
 import type { GameCommand } from '../../core/contracts.ts';
+import {
+  DEFAULT_WEAPON,
+  WEAPON_ORDER,
+  getWeaponDefinition,
+  isWeaponId,
+  type WeaponFireCue,
+  type WeaponId,
+  type WeaponReloadCue,
+} from '../../core/gameplay/weapons.ts';
 import { AudioManager } from '../AudioManager.ts';
 import type { SceneManager } from '../SceneManager.ts';
 import { WeaponView } from './WeaponView.ts';
 
-const FIRE_COOLDOWN_MS = 220;
+const SWITCH_COOLDOWN_MS = 120;
 const MAX_RANGE = 60;
 
 export interface WeaponTargets {
@@ -14,6 +23,8 @@ export interface WeaponTargets {
   world: () => THREE.Object3D[];
   /** Current ammo, to avoid firing an empty gun (the engine also checks). */
   ammoInMagazine: () => number;
+  /** Current active weapon identifier from the simulation snapshot. */
+  weaponId?: () => string;
 }
 
 export interface ShotResult {
@@ -21,13 +32,17 @@ export interface ShotResult {
   point: THREE.Vector3 | null;
 }
 
+type WeaponControllerCue = WeaponFireCue | WeaponReloadCue | 'dry_fire' | 'weapon_switch';
+
 export class WeaponController {
   private readonly raycaster = new THREE.Raycaster();
   private readonly aim = new THREE.Vector2();
   private readonly audioPosition = new THREE.Vector3();
   private readonly viewModel: WeaponView;
   private readonly listeners = new Set<(shot: ShotResult) => void>();
+  private activeWeaponId: WeaponId = DEFAULT_WEAPON;
   private lastShotMs = -Infinity;
+  private lastSwitchMs = -Infinity;
   private enabled = true;
 
   constructor(
@@ -39,6 +54,7 @@ export class WeaponController {
     this.raycaster.far = MAX_RANGE;
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('wheel', this.onWheel, { passive: true });
   }
 
   setEnabled(enabled: boolean): void {
@@ -51,12 +67,28 @@ export class WeaponController {
   }
 
   update(dt: number): void {
+    const simId = this.currentWeaponId();
+    if (simId !== this.activeWeaponId) {
+      this.activeWeaponId = simId;
+      this.viewModel.setWeapon(simId);
+    }
     this.viewModel.update(dt);
   }
 
+  switchWeapon(weaponId: string): boolean {
+    if (!this.enabled || !isWeaponId(weaponId) || weaponId === this.currentWeaponId()) return false;
+    this.send({ type: 'switchWeapon', weaponId });
+    if (this.currentWeaponId() !== weaponId) return false;
+    this.activeWeaponId = weaponId;
+    this.viewModel.setWeapon(weaponId);
+    this.playCue('weapon_switch');
+    return true;
+  }
+
   fire(): ShotResult | null {
+    const def = getWeaponDefinition(this.currentWeaponId());
     const now = performance.now();
-    if (!this.enabled || now - this.lastShotMs < FIRE_COOLDOWN_MS) return null;
+    if (!this.enabled || now - this.lastShotMs < def.fireCooldownMs) return null;
     this.lastShotMs = now;
 
     const ammo = this.targets.ammoInMagazine();
@@ -80,7 +112,7 @@ export class WeaponController {
     this.send({ type: 'fire', hitAgentId });
     if (this.targets.ammoInMagazine() >= ammo) return null;
     this.viewModel.fire();
-    this.playCue('gunshot');
+    this.playCue(def.fireAudioCue);
     const shot = { hitAgentId, point: hit?.point.clone() ?? null };
     for (const listener of this.listeners) listener(shot);
     return shot;
@@ -89,8 +121,14 @@ export class WeaponController {
   dispose(): void {
     window.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('wheel', this.onWheel);
     this.viewModel.dispose();
     this.listeners.clear();
+  }
+
+  private currentWeaponId(): WeaponId {
+    const raw = this.targets.weaponId?.() ?? DEFAULT_WEAPON;
+    return isWeaponId(raw) ? raw : DEFAULT_WEAPON;
   }
 
   private readonly onMouseDown = (event: MouseEvent): void => {
@@ -98,20 +136,42 @@ export class WeaponController {
     this.fire();
   };
 
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (!this.enabled || !this.sceneManager.isPointerLocked() || event.deltaY === 0) return;
+    const now = performance.now();
+    if (now - this.lastSwitchMs < SWITCH_COOLDOWN_MS) return;
+    this.lastSwitchMs = now;
+    const currentIndex = WEAPON_ORDER.indexOf(this.currentWeaponId());
+    const delta = event.deltaY > 0 ? 1 : -1;
+    const nextIndex = (currentIndex + delta + WEAPON_ORDER.length) % WEAPON_ORDER.length;
+    this.switchWeapon(WEAPON_ORDER[nextIndex]);
+  };
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (event.code !== 'KeyR' || event.repeat || !this.enabled) return;
+    if (event.repeat || !this.enabled) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+    const slotMatch = /^(?:Digit|Numpad)([1-6])$/.exec(event.code);
+    if (slotMatch) {
+      const next = WEAPON_ORDER[Number(slotMatch[1]) - 1];
+      if (next) this.switchWeapon(next);
+      return;
+    }
+
+    if (event.code !== 'KeyR') return;
+    const def = getWeaponDefinition(this.currentWeaponId());
     const ammo = this.targets.ammoInMagazine();
+    const wasEmpty = ammo === 0;
     this.send({ type: 'reload' });
     const loaded = this.targets.ammoInMagazine() - ammo;
     if (loaded > 0) {
-      this.viewModel.reload(loaded);
-      this.playCue('reload');
+      this.viewModel.reload(loaded, wasEmpty);
+      this.playCue(def.reloadAudioCue);
     }
   };
 
-  private playCue(cue: 'gunshot' | 'dry_fire' | 'reload'): void {
+  private playCue(cue: WeaponControllerCue): void {
     const position = this.viewModel.muzzlePosition(this.audioPosition);
     AudioManager.playWeaponCue(this.sceneManager.camera, cue, position);
   }

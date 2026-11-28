@@ -18,6 +18,8 @@ import type { AgentSpawnConfig } from '../src/core/gameplay/scenes.ts';
 import { WeightedGraph } from '../src/core/graph/WeightedGraph.ts';
 import { parseMapDefinition } from '../src/core/graph/mapLoader.ts';
 import { SeededRng } from '../src/core/graph/seededRng.ts';
+import { WEAPON_ORDER, cancelTimedReload, getWeaponDefinition } from '../src/core/gameplay/weapons.ts';
+import { MockWorld } from '../src/dev/mockSnapshot.ts';
 
 const street = parseMapDefinition(JSON.parse(
   readFileSync(new URL('../public/maps/map_street.json', import.meta.url), 'utf8')
@@ -649,5 +651,181 @@ describe('Explorer scream behavior', () => {
 
     const m3 = move(meleeEngine, cell(10, 11), 'stealth');
     expect(m3.agents[0].state).toBe('pursue');
+  });
+});
+
+describe('Multi-weapon arsenal', () => {
+  it('supports switching across all 6 unlocked weapons with independent ammo inventories', () => {
+    expect(WEAPON_ORDER).toEqual(['pistol', 'm4', 'persuader', 'dual_mac10', 'sawnoff', 'dual_sawnoffs']);
+    const engine = streetEngine();
+
+    for (const id of WEAPON_ORDER) {
+      const def = getWeaponDefinition(id);
+      engine.applyCommand({ type: 'switchWeapon', weaponId: id });
+      const active = engine.getSnapshot().mara.weapon;
+      expect(active.id).toBe(id);
+      expect(active.magazineSize).toBe(def.magazineSize);
+      expect(active.ammoInMagazine).toBe(def.magazineSize);
+      expect(active.ammoReserve).toBe(def.initialReserve);
+      expect(def.fireAudioCue).toBeTruthy();
+      expect(def.reloadAudioCue).toBeTruthy();
+    }
+
+    // Fire 3 rounds with M4, switch to Dual MAC-10 and fire 2, then verify M4 preserved its counts.
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'm4' });
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({ id: 'm4', ammoInMagazine: 27, ammoReserve: 90 });
+
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'dual_mac10' });
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({ id: 'dual_mac10', ammoInMagazine: 30 });
+
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'm4' });
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({ id: 'm4', ammoInMagazine: 27, ammoReserve: 90 });
+  });
+
+  it('cancels timed reload cleanly on weapon switch without duplicating ammo or locking weapons', () => {
+    const engine = streetEngine();
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'm4' });
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({ ammoInMagazine: 28, ammoReserve: 90 });
+
+    expect(engine.reload()).toBe(true);
+    expect(engine.getSnapshot().mara.weapon.reloading).toBe(true);
+    expect(engine.getSnapshot().reloadTicksRemaining).toBe(6);
+
+    // Switch mid-reload to Persuader: Persuader is ready immediately and M4 refunds the 2 pending rounds.
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'persuader' });
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({ id: 'persuader', reloading: false });
+    expect(engine.getSnapshot().reloadTicksRemaining).toBe(0);
+    expect(engine.fire(null).fired).toBe(true);
+
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'm4' });
+    expect(engine.getSnapshot().mara.weapon).toMatchObject({
+      id: 'm4',
+      ammoInMagazine: 28,
+      ammoReserve: 90,
+      reloading: false,
+    });
+    expect(engine.fire(null).fired).toBe(true);
+
+    // Collecting ammo while reloading must not allow a cancelled reload to exceed maxReserve.
+    expect(
+      cancelTimedReload(
+        { id: 'sawnoff', ammoInMagazine: 2, magazineSize: 2, ammoReserve: 32, reloading: true },
+        1
+      )
+    ).toEqual({
+      id: 'sawnoff',
+      ammoInMagazine: 1,
+      magazineSize: 2,
+      ammoReserve: 32,
+      reloading: false,
+    });
+    const ammoBoxes = engine.getSnapshot().lootPickups!.filter((l) => l.kind === 'ammo');
+    expect(ammoBoxes.length).toBeGreaterThanOrEqual(2);
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'sawnoff' });
+    walk(engine, ammoBoxes[0].position);
+    expect(engine.getSnapshot().mara.weapon.ammoReserve).toBe(16 + ammoBoxes[0].amount);
+
+    const pathToSecond = shortestPath(
+      engine,
+      engine.getSnapshot().mara.position,
+      ammoBoxes[1].position
+    );
+    expect(pathToSecond.length).toBeGreaterThanOrEqual(3);
+    walk(engine, pathToSecond.at(-3)!);
+    const secondBeforeReload = engine
+      .getSnapshot()
+      .lootPickups!.find((l) => l.id === ammoBoxes[1].id);
+    expect(secondBeforeReload?.collected).toBe(false);
+
+    expect(engine.fire(null).fired).toBe(true);
+    expect(engine.reload()).toBe(true);
+    move(engine, pathToSecond.at(-2)!);
+
+    const pickedDuringReload = engine.getSnapshot();
+    const secondAfterPickup = pickedDuringReload.lootPickups!.find(
+      (l) => l.id === ammoBoxes[1].id
+    );
+    expect(secondAfterPickup?.collected).toBe(true);
+    expect(pickedDuringReload.mara.weapon.reloading).toBe(true);
+    expect(pickedDuringReload.reloadTicksRemaining).toBeGreaterThan(0);
+    expect(pickedDuringReload.mara.weapon.ammoInMagazine).toBe(2);
+    expect(pickedDuringReload.mara.weapon.ammoReserve).toBe(
+      getWeaponDefinition('sawnoff').maxReserve
+    );
+
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'pistol' });
+    engine.applyCommand({ type: 'switchWeapon', weaponId: 'sawnoff' });
+    const afterSwitchBack = engine.getSnapshot().mara.weapon;
+    expect(afterSwitchBack.ammoInMagazine).toBe(1);
+    expect(afterSwitchBack.ammoReserve).toBe(getWeaponDefinition('sawnoff').maxReserve);
+    expect(afterSwitchBack.reloading).toBe(false);
+  });
+
+  it('applies per-weapon damage, sound radii, magazine reload timing, and MockWorld switching', () => {
+    // 1. Sawed-Off one-shots a 70-HP explorer and triggers distant zombies; Dual MAC-10 is suppressed.
+    const walled = fineAsciiMap([
+      'R.................P',
+      '.S.................',
+      '###################',
+      '...................E',
+    ]);
+    // Zombie at (3, 14) is ~13.15 cells from Mara at (1, 1): beyond MAC-10 radius 10, inside Sawed-Off radius 26.
+    const silentEngine = new SimulationEngine(walled, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('far', cell(3, 14), 'explorer')],
+    });
+    silentEngine.applyCommand({ type: 'switchWeapon', weaponId: 'dual_mac10' });
+    const macShot = silentEngine.fire(null);
+    expect(macShot.sound).toMatchObject({ radius: 10, intensity: 0.65 });
+    const afterMac = silentEngine.step(tickMs);
+    expect(afterMac.agents[0]).toMatchObject({ state: 'patrol', memory: null });
+
+    const loudEngine = new SimulationEngine(walled, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [
+        spawn('far', cell(3, 14), 'explorer'),
+        spawn('close', cell(1, 5), 'explorer'),
+      ],
+    });
+    loudEngine.applyCommand({ type: 'switchWeapon', weaponId: 'sawnoff' });
+    const sawnShot = loudEngine.fire('close');
+    expect(sawnShot.killed).toBe(true);
+    expect(sawnShot.sound).toMatchObject({ radius: 26, intensity: 1 });
+    const afterSawn = loudEngine.step(tickMs);
+    expect(afterSawn.agents[0].memory).toMatchObject({ source: 'sound', position: walled.spawnMara });
+    expect(afterSawn.agents[1].state).toBe('dead');
+
+    // 2. M4 finishes its fixed 6-tick magazine reload cleanly.
+    const reloadEngine = streetEngine();
+    reloadEngine.applyCommand({ type: 'switchWeapon', weaponId: 'm4' });
+    for (let i = 0; i < 4; i++) expect(reloadEngine.fire(null).fired).toBe(true);
+    expect(reloadEngine.reload()).toBe(true);
+    for (let remaining = 6; remaining > 0; remaining--) {
+      expect(reloadEngine.fire(null).fired).toBe(false);
+      expect(reloadEngine.step(tickMs).reloadTicksRemaining).toBe(remaining - 1);
+    }
+    expect(reloadEngine.getSnapshot().mara.weapon).toMatchObject({
+      id: 'm4',
+      ammoInMagazine: 30,
+      ammoReserve: 86,
+      reloading: false,
+    });
+
+    // 3. MockWorld supports switchWeapon and per-weapon damage.
+    const mock = new MockWorld(street, 1);
+    const victim = mock.getSnapshot().agents.find((a) => a.role === 'explorer')!;
+    mock.applyCommand({ type: 'switchWeapon', weaponId: 'sawnoff' });
+    expect(mock.getSnapshot().mara.weapon.id).toBe('sawnoff');
+    mock.applyCommand({ type: 'fire', hitAgentId: victim.id });
+    expect(mock.getSnapshot().agents.find((a) => a.id === victim.id)!.state).toBe('dead');
   });
 });

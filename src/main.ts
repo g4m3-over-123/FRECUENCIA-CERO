@@ -99,6 +99,7 @@ async function bootstrap(): Promise<void> {
       agents: () => agents.getHitTargets(),
       world: () => [...world.getCollidables(), ...worldState.getCollidables()],
       ammoInMagazine: () => loop.latest().mara.weapon.ammoInMagazine,
+      weaponId: () => loop.latest().mara.weapon.id,
     },
     (command) => loop.send(command)
   );

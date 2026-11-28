@@ -34,6 +34,15 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 | `public/assets/props/modular_chainlink_fence.glb` | https://polyhaven.com/a/modular_chainlink_fence | James Ray Cock y Amal Kumar | CC0 1.0 | Felipe |
 | `public/assets/props/rollershutter_door.glb` | https://polyhaven.com/a/rollershutter_door | MP | CC0 1.0 | Felipe |
 | `public/assets/props/security_light.glb` | https://polyhaven.com/a/security_light | Maximilian Schuster | CC0 1.0 | Felipe |
+| `public/assets/audio/gunshot_spas12.wav` | https://opengameart.org/content/gunshot-sounds | Tabasco | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/gunshot_m4.wav` | https://opengameart.org/content/gunshot-sounds | Tabasco | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/gunshot_persuader.wav` | https://opengameart.org/content/gunshot-sounds | Tabasco | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/gunshot_sawnoff.wav` | https://opengameart.org/content/gunshot-sounds | Tabasco | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/gunshot_mac10.wav` | https://opengameart.org/content/hollywood-style-pistol-silencer-sound-effect | bart | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/reload_m4.wav` | https://opengameart.org/content/gun-reload-sounds | SpringySpringo | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/reload_mag.wav` | https://opengameart.org/content/gun-reload-sounds | SpringySpringo | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/reload_shotgun.wav` | https://opengameart.org/content/gun-reload-sounds | SpringySpringo | CC0 1.0 (Public Domain) | marlon890 |
+| `public/assets/audio/weapon_switch.wav` | https://opengameart.org/content/equipment-clicks-iii | LFA | CC0 1.0 (Public Domain) | marlon890 |
 
 ## Notas
 
@@ -44,3 +53,4 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 - `step.wav` proviene de `Footsteps/hard-footstep1.wav` (Sound Effects Pack, OwlishMedia, CC0): recortado en silencios extremos con fundidos cortos y normalizado a -1.4 dBFS en PCM mono de 16 bits a 44.1 kHz para reproduccion espacial. `ambient.wav` proviene de `ambient_horror.wav` (Ambient horror, techiew, CC0): procesado con crossfade de potencia constante de 0.75 s para bucle continuo sin cortes y normalizado a -1.9 dBFS en PCM estereo de 16 bits a 48 kHz.
 - La barrera, la caja, el bote y el generador usan el glTF de Poly Haven con texturas 1K, empaquetado en GLB. Los escombros usan el LOD1 de Tevy con geometría sin compresión Meshopt y texturas PNG.
 - La valla, la persiana y la lámpara usan texturas de 1K de Poly Haven empaquetadas en GLB. La ambulancia y la barricada usan el LOD1 de Tevy con geometría sin compresión Meshopt y texturas PNG.
+- Los nueve WAV de disparo, recarga y cambio de arma se recortaron por evento individual (eliminando pausas entre rafagas de los clips originales) y se normalizaron entre -1.6 dBFS y -1.0 dBFS en PCM mono de 16 bits para Web Audio espacial.

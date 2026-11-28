@@ -166,8 +166,12 @@ body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-
 .hud-bar meter { width: 160px; height: 10px; }
 .hud-bottom-right { position: absolute; left: 50%; bottom: 16px; translate: -50% 0; text-align: center; text-shadow: 0 1px 3px #000; }
 .hud-bottom-right p { margin: 0; }
+.hud-weapon { color: var(--accent); font-size: .78rem; font-weight: 700; letter-spacing: .05em; }
 .hud-ammo b { font-size: 2rem; }
 .hud-ammo span, .hud-meta { color: var(--muted); font-size: .8rem; }
+.hud-weapons { display: flex; justify-content: center; gap: 4px; margin: 4px 0; flex-wrap: wrap; }
+.hud-slot { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: #0b1017aa; color: var(--muted); font-size: .66rem; white-space: nowrap; }
+.hud-slot.active { border-color: var(--accent); color: var(--accent); background: #203a4bcc; }
 .hud-lock { position: absolute; left: 50%; top: 62%; translate: -50% 0; padding: 12px 18px; border: 1px solid var(--line);
   border-radius: 10px; background: #0b1017cc; text-align: center; font-size: .75rem; color: var(--muted); }
 .hud-lock p { margin: 2px 0; }
