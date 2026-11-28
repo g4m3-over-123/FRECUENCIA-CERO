@@ -9,15 +9,15 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 const NIGHT_SKY_COLOR = 0x0b1220;
 const FPV_FOG_DENSITY = 0.018;
-const EYE_HEIGHT_STANDING = 1.65;
-const EYE_HEIGHT_CROUCHING = 1.05;
+const EYE_HEIGHT_STANDING = 1.58;
+const EYE_HEIGHT_CROUCHING = 1.0;
 const CROUCH_SMOOTH_SPEED = 10;
 const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
 const DEFAULT_STREET_ASSET_URL = '/assets/props/street.glb';
 /** Horizontal field of view kept on wide screens; a wider one stretches the screen edges. */
-const HORIZONTAL_FOV_DEG = 90;
-const VERTICAL_FOV_RANGE_DEG: [number, number] = [55, 72];
+const HORIZONTAL_FOV_DEG = 78;
+const VERTICAL_FOV_RANGE_DEG: [number, number] = [48, 62];
 /** Longest frame step; above it (tab switch, debugger) the game slows down instead of jumping. */
 const MAX_FRAME_DT = 0.25;
 /** WebGL running on the CPU: the browser has no hardware acceleration. */
@@ -201,7 +201,7 @@ export class SceneManager {
 
   /**
    * Updates Mara's FPV camera world position and smoothly interpolates eye height
-   * between standing (1.65m) and crouching (1.05m).
+   * between standing (1.58m) and crouching (1.0m).
    */
   setPlayerPose(x: number, z: number, isCrouching: boolean, dt: number): void {
     const targetHeight = isCrouching ? EYE_HEIGHT_CROUCHING : EYE_HEIGHT_STANDING;

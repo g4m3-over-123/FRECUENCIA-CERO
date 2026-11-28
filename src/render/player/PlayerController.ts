@@ -18,7 +18,8 @@ import type { CollisionMask } from '../world/collisionMask.ts';
  */
 
 const SPEED: Record<MaraPosture, number> = { stealth: 1.7, walk: 3.2, sprint: 5.6 };
-const PLAYER_RADIUS = 0.28;
+/** Half the shoulder width of an adult; a larger circle stops the player short of walls. */
+const PLAYER_RADIUS = 0.2;
 /** Longest move between collision checks; well under the radius so walls are never skipped. */
 const MAX_SUBSTEP = 0.1;
 const MAX_PUSHES = 8;

@@ -254,11 +254,8 @@ export class SimulationEngine {
     return this.isFineGrid() ? (role === 'explorer' ? 5 : 4) : base;
   }
 
-  private effectiveReloadDurationTicks(weaponId: string): number {
-    const def = getWeaponDefinition(weaponId);
-    return this.isFineGrid()
-      ? def.reloadDurationTicks
-      : Math.max(2, Math.round(def.reloadDurationTicks / 2));
+  private effectiveReloadDurationTicks(durationTicks: number): number {
+    return this.isFineGrid() ? durationTicks : Math.max(2, Math.round(durationTicks / 2));
   }
 
   private effectiveDecoyDurationTicks(): number {
@@ -537,7 +534,7 @@ export class SimulationEngine {
     const started = startTimedReload(this.mara.weapon);
     if (!started) return false;
     this.mara.weapon = started.weapon;
-    this.reloadTicksRemaining = this.effectiveReloadDurationTicks(started.weapon.id);
+    this.reloadTicksRemaining = this.effectiveReloadDurationTicks(started.durationTicks);
     this.pushLog(
       'gameplay',
       `Mara reloading ${started.weapon.id} (${this.reloadTicksRemaining} ticks) [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`

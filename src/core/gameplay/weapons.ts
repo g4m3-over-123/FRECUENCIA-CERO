@@ -13,19 +13,23 @@ export interface WeaponDefinition {
   /** Sound radius in cells. */
   soundRadius: number;
   soundIntensity: number;
+  /** Ticks to bring the weapon up and down again, whatever the number of rounds. */
   reloadDurationTicks: number;
+  /** Extra ticks for each round loaded, so a full reload takes longer than a top-up. */
+  reloadTicksPerRound: number;
 }
 
 export const WEAPONS = {
   pistol: {
     id: 'pistol',
     damage: 35,
-    magazineSize: 12,
+    magazineSize: 8,
     initialReserve: 36,
     maxReserve: 72,
     soundRadius: 22,
     soundIntensity: 1,
-    reloadDurationTicks: 4,
+    reloadDurationTicks: 2,
+    reloadTicksPerRound: 1,
   },
 } as const satisfies Record<string, WeaponDefinition>;
 
@@ -73,7 +77,7 @@ export function reloadWeapon(weapon: WeaponSnapshot): WeaponSnapshot {
  */
 export function startTimedReload(
   weapon: WeaponSnapshot
-): { weapon: WeaponSnapshot; durationTicks: number } | null {
+): { weapon: WeaponSnapshot; durationTicks: number; rounds: number } | null {
   if (weapon.reloading || weapon.ammoInMagazine >= weapon.magazineSize || weapon.ammoReserve <= 0) {
     return null;
   }
@@ -87,7 +91,8 @@ export function startTimedReload(
       ammoReserve: weapon.ammoReserve - taken,
       reloading: true,
     },
-    durationTicks: def.reloadDurationTicks,
+    durationTicks: def.reloadDurationTicks + def.reloadTicksPerRound * taken,
+    rounds: taken,
   };
 }
 

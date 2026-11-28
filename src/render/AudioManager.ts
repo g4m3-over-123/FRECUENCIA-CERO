@@ -4,11 +4,11 @@ import type { AgentState, GridCoord, MapDefinition, SoundEvent, WorldSnapshot } 
 import { gridToWorld } from '../core/world/gridSpace.ts';
 
 const gains = {
-  step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.34,
-  barricade: 0.45, radio: 0.48, ambient: 0.22,
+  step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.52,
+  barricade: 0.45, radio: 0.48, ambient: 0.08,
   gunshot: 0.52, reload: 0.34, dry_fire: 0.21, impact: 0.42,
-  growl: 0.38, zombie_growl_2: 0.38, zombie_attack: 0.46,
-  zombie_hurt: 0.40, zombie_death: 0.44, zombie_idle: 0.24,
+  growl: 0.60, zombie_growl_2: 0.60, zombie_attack: 0.70,
+  zombie_hurt: 0.62, zombie_death: 0.68, zombie_idle: 0.38,
 } as const;
 
 export type AudioCue = keyof typeof gains;

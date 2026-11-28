@@ -6,7 +6,22 @@ const PREFIX = 'RIG_UE5_Comando_';
 // Puts the rig's eye (its 'Camera' node, model space (0, 3.864, 0.054)) on the game camera,
 // so the arms are seen from where the animation pack was authored. With the eye 0.29 m ahead
 // of the camera the left shoulder and upper arm showed up as a large blob at the bottom left.
-const REST = new THREE.Vector3(.02, -.15, .02);
+// Held 16 cm further than the eye so more of the weapon shows; past about 20 cm the left
+// shoulder enters the view again.
+const REST = new THREE.Vector3(.05, -.15, -.16);
+/** Steps per second: running lengthens the stride more than it quickens the cadence. */
+const STEP_CADENCE = { base: 1.6, perMps: .22 };
+/** Bob amplitude at walking speed, in metres; it grows with speed up to BOB_MAX_GAIN. */
+const BOB_SIDE = .0055;
+const BOB_LIFT = .0045;
+const BOB_MAX_GAIN = 1.3;
+/** Part of the Reload clip where the left hand feeds one round (its first half raises the weapon). */
+const INSERT_CLIP = { from: .53, to: 1.66 };
+/** Timing in seconds; one round per simulation tick (about 0.385 s on the street map). */
+const RELOAD_TIMING = { raise: .34, perRound: .385, lower: .34 };
+const WALK_SPEED = 3.2;
+/** Above this ground speed the weapon is lowered and tilted as when running. */
+const SPRINT_SPEED = 4.6;
 
 type Motion = { clip: THREE.AnimationClip; seconds?: number };
 
@@ -23,8 +38,17 @@ export class WeaponView {
   private recoil = 0;
   private flashTimer = 0;
   private disposed = false;
+  private readonly camera: THREE.Camera;
+  private readonly lastCamera = new THREE.Vector3();
+  private readonly cameraPosition = new THREE.Vector3();
+  private hasLastCamera = false;
+  private speed = 0;
+  private bobPhase = 0;
+  private bobWeight = 0;
+  private sprintWeight = 0;
 
   constructor(camera: THREE.Camera) {
+    this.camera = camera;
     this.root.name = 'weapon-view';
     this.root.position.copy(REST);
     this.muzzle.name = 'weapon-muzzle';
@@ -50,8 +74,22 @@ export class WeaponView {
   update(dt: number): void {
     this.mixer?.update(dt);
     this.recoil *= Math.exp(-14 * dt);
-    this.root.position.z = REST.z + this.recoil * .035;
-    this.root.rotation.x = this.recoil * .05;
+    this.updateBob(dt);
+    const gain = Math.min(BOB_MAX_GAIN, this.speed / WALK_SPEED);
+    const side = Math.sin(this.bobPhase) * BOB_SIDE * gain * this.bobWeight;
+    // abs(cos) dips once per step, like the shoulders settling on each footfall.
+    const lift = (Math.abs(Math.cos(this.bobPhase)) - .5) * BOB_LIFT * gain * this.bobWeight;
+    const run = this.sprintWeight;
+    this.root.position.set(
+      REST.x + side + run * .012,
+      REST.y + lift - run * .022,
+      REST.z + this.recoil * .035 + run * .01,
+    );
+    this.root.rotation.set(
+      this.recoil * .05 - run * .06,
+      run * .08,
+      -side * 2.2 + run * .1,
+    );
     this.flashTimer = Math.max(0, this.flashTimer - dt);
     this.flash.intensity = this.flashTimer > 0 ? 21 : 0;
   }
@@ -62,8 +100,13 @@ export class WeaponView {
     this.playSequence([['Fire', .34]]);
   }
 
-  reload(): void {
-    this.playSequence([['IdleToReload', .26], ['Reload', .77], ['ReloadToIdle', .24]]);
+  /** Raises the weapon, feeds `rounds` rounds one by one and lowers it again. */
+  reload(rounds: number): void {
+    const sequence: [string, number][] = [['IdleToReload', RELOAD_TIMING.raise]];
+    // Two copies of the clip alternate so each round cross-fades into the next instead of snapping.
+    for (let i = 0; i < Math.max(1, rounds); i++) sequence.push([`Insert${i % 2}`, RELOAD_TIMING.perRound]);
+    sequence.push(['ReloadToIdle', RELOAD_TIMING.lower]);
+    this.playSequence(sequence);
   }
 
   muzzlePosition(target: THREE.Vector3): THREE.Vector3 {
@@ -81,12 +124,39 @@ export class WeaponView {
     this.disposeModel(this.fallback);
   }
 
+  /** Ground speed from the camera's own motion, so the view needs no player input. */
+  private updateBob(dt: number): void {
+    const position = this.camera.getWorldPosition(this.cameraPosition);
+    if (dt > 0 && this.hasLastCamera) {
+      // Horizontal only: crouching moves the camera vertically and must not bob the weapon.
+      let moved = Math.hypot(position.x - this.lastCamera.x, position.z - this.lastCamera.z);
+      // A jump of metres in one frame is a respawn, not a step.
+      if (moved > 1) moved = 0;
+      this.speed += (moved / dt - this.speed) * (1 - Math.exp(-10 * dt));
+      const cadence = this.speed > .3 ? STEP_CADENCE.base + STEP_CADENCE.perMps * this.speed : 0;
+      // abs(cos) below has a period of PI, so PI of phase is one step.
+      this.bobPhase = (this.bobPhase + cadence * Math.PI * dt) % (Math.PI * 2);
+    }
+    this.lastCamera.copy(position);
+    this.hasLastCamera = true;
+    const blend = 1 - Math.exp(-8 * dt);
+    this.bobWeight += ((this.speed > .3 ? 1 : 0) - this.bobWeight) * blend;
+    this.sprintWeight += ((this.speed > SPRINT_SPEED ? 1 : 0) - this.sprintWeight) * blend;
+  }
+
   private install(asset: GLTF): void {
     this.clips = new Map(asset.animations.map((clip) => [clip.name.replace(PREFIX, ''), clip]));
     const idle = this.clips.get('Idle');
     if (!idle || !this.clips.has('Fire') || !this.clips.has('Reload')) {
       this.disposeModel(asset.scene);
       return;
+    }
+
+    const reload = this.clips.get('Reload')!;
+    const fps = 30;
+    for (const name of ['Insert0', 'Insert1']) {
+      this.clips.set(name, THREE.AnimationUtils.subclip(
+        reload, name, Math.round(INSERT_CLIP.from * fps), Math.round(INSERT_CLIP.to * fps), fps));
     }
 
     const model = asset.scene;
