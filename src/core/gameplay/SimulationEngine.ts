@@ -551,6 +551,7 @@ export class SimulationEngine {
     if (!runtime || runtime.role === 'radio_survivor' || runtime.state === 'dead') return false;
 
     runtime.health = Math.max(0, runtime.health - Math.max(0, damage));
+    runtime.alertHoldUntilTick = -1;
     if (runtime.health <= 0) {
       runtime.state = 'dead';
       runtime.currentPath = [];
@@ -781,6 +782,13 @@ export class SimulationEngine {
 
       if (cycle.planChanged && cycle.planChangeReason) {
         this.pushLog('agent', cycle.planChangeReason);
+      }
+
+      if (cycle.emittedSound) {
+        this.emitSound({
+          id: `sound-${cycle.emittedSound.sourceId}-${runtime.id}-${this.tickCount + 1}`,
+          ...cycle.emittedSound,
+        });
       }
 
       if (cycle.shouldBroadcastAlert && cycle.alertTarget) {
@@ -1245,7 +1253,9 @@ export class SimulationEngine {
         sameCoord(runtime.position, this.mara.position) &&
         this.tickCount - runtime.lastAttackTick >= cooldown
       ) {
+        runtime.alertHoldUntilTick = -1;
         runtime.state = 'attack';
+        runtime.goalReason = 'engaging Mara in melee';
         runtime.lastAttackTick = this.tickCount;
         this.mara.health = Math.max(0, this.mara.health - profile.meleeDamage);
         this.pushLog(

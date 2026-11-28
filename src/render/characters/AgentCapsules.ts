@@ -4,7 +4,7 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { AgentRole, AgentState, MapDefinition } from '../../core/contracts.ts';
 import type { ExtendedAgentSnapshot } from '../../core/agents/AgentBrain.ts';
 import { gridToWorld } from '../../core/world/gridSpace.ts';
-import type { FrameState } from '../../game/GameLoop.ts';
+import { tickMsForMap, type FrameState } from '../../game/GameLoop.ts';
 import type { AgentView } from '../../game/views.ts';
 import { AudioManager } from '../AudioManager.ts';
 import { explorerScreamAt } from './explorerScream.ts';
@@ -219,10 +219,19 @@ export class AgentCapsules implements AgentView {
       const action = model.mixer.clipAction(clip);
       const loop = LOOPS.has(clip.name);
       action.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+      if (screaming) {
+        // The sound arrives one tick into the three-tick hold.
+        action.setDuration(Math.min(clip.duration, 2 * tickMsForMap(this.map) / 1000));
+      }
       action.clampWhenFinished = !loop;
       action.play();
-      if (model.action && model.action !== action) model.action.crossFadeTo(action, .10, false);
-      else if (state === 'dead' && body.state === 'dead') action.time = clip.duration;
+      if (model.action && model.action !== action) {
+        const interrupted = state === 'attack' || state === 'stunned' || state === 'dead';
+        const fade = model.action.getClip().name === 'scream' && !interrupted ? .15 : .10;
+        model.action.crossFadeTo(action, fade, false);
+      } else if (state === 'dead' && body.state === 'dead') {
+        action.time = clip.duration;
+      }
       model.action = action;
     }
     model.mixer.update(dt);

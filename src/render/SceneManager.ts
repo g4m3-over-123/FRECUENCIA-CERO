@@ -6,15 +6,115 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { CityBuilder } from './CityBuilder.ts';
 
-const NIGHT_SKY_COLOR = 0x0b1220;
-const FPV_FOG_DENSITY = 0.018;
+const NIGHT_SKY_COLOR = 0x090f1c;
+const FPV_FOG_DENSITY = 0.037;
+const FILL_SCALE = 0.165;
+const MOON_SCALE = 0.28;
+const FOG_SCALE = 2.5;
+const SKY_SCALE = 0.58;
 const EYE_HEIGHT_STANDING = 1.58;
 const EYE_HEIGHT_CROUCHING = 1.0;
 const CROUCH_SMOOTH_SPEED = 10;
 const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
-const DEFAULT_STREET_ASSET_URL = '/assets/props/street.glb';
+const DEFAULT_STREET_ASSET_URL = `${import.meta.env.BASE_URL}assets/props/street_enhanced.glb`;
+
+function createNightEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
+  const environment = new THREE.Scene();
+  environment.background = new THREE.Color(0x080e1c);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const panels = [
+    { position: [-5, 7, 1], size: [12, 5], color: 0x779dcd, intensity: 0.75 },
+    { position: [7, 3, -5], size: [3, 5], color: 0xffad71, intensity: 0.52 },
+  ];
+  for (const { position, size, color, intensity } of panels) {
+    const material = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color).multiplyScalar(intensity),
+    });
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(size[0], size[1]), material);
+    panel.position.set(position[0], position[1], position[2]);
+    panel.lookAt(0, 0, 0);
+    environment.add(panel);
+  }
+  const target = pmrem.fromScene(environment, 0.032, 0.1, 32);
+  for (const panel of environment.children as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[]) {
+    panel.geometry.dispose();
+    panel.material.dispose();
+  }
+  pmrem.dispose();
+  return target;
+}
+
+function createRain() {
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(1600 * 3);
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] = Math.random() * 26;
+    positions[i + 1] = Math.random() * 10;
+    positions[i + 2] = Math.random() * 26;
+  }
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const size = 32;
+  const streak = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const height = y / (size - 1);
+    const fade = Math.sin(Math.PI * height) ** 1.6 * (0.35 + 0.65 * height);
+    const center = size / 2 + (height - 0.5) * 5;
+    for (let x = 0; x < size; x++) {
+      const alpha = Math.exp(-((x - center) ** 2) / 1.25) * fade;
+      streak.set([255, 255, 255, Math.round(255 * alpha)], (y * size + x) * 4);
+    }
+  }
+  const map = new THREE.DataTexture(streak, size, size);
+  map.magFilter = map.minFilter = THREE.LinearFilter;
+  map.needsUpdate = true;
+  const material = new THREE.PointsMaterial({
+    color: 0xb7d4f5, map, size: 0.24, opacity: 0.55,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const time = { value: 0 };
+  const center = { value: new THREE.Vector3() };
+  const direction = { value: new THREE.Vector3() };
+  const flashlight = { value: 0 };
+  material.onBeforeCompile = shader => {
+    shader.uniforms.rainTime = time;
+    shader.uniforms.rainCenter = center;
+    shader.uniforms.rainDirection = direction;
+    shader.uniforms.rainFlashlight = flashlight;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `
+        #include <common>
+        uniform float rainTime;
+        uniform vec3 rainCenter;
+        uniform vec3 rainDirection;
+        uniform float rainFlashlight;
+        varying float vRainBrightness;
+      `)
+      .replace('#include <begin_vertex>', `
+        #include <begin_vertex>
+        float speed = mix(9.0, 14.0, fract(position.z * 1.9 + position.x * 0.71));
+        transformed.xz = mod(position.xz + vec2(1.3, -0.75) * rainTime - rainCenter.xz, 26.0)
+          - 13.0 + rainCenter.xz;
+        transformed.y = mod(position.y - speed * rainTime, 10.0) + 0.12;
+        vec3 ray = transformed - rainCenter;
+        float distanceToEye = max(length(ray), 0.001);
+        float lit = smoothstep(0.88, 0.975, dot(ray / distanceToEye, rainDirection));
+        lit *= (1.0 - smoothstep(6.0, 20.0, distanceToEye)) * rainFlashlight;
+        vRainBrightness = (0.32 + 1.4 * lit) * smoothstep(0.55, 1.5, distanceToEye);
+      `);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vRainBrightness;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vRainBrightness;');
+  };
+  const drops = new THREE.Points(geometry, material);
+  drops.name = 'night-rain';
+  drops.frustumCulled = false;
+  return { drops, map, time, center, direction, flashlight };
+}
+
 /** Horizontal field of view kept on wide screens; a wider one stretches the screen edges. */
 const HORIZONTAL_FOV_DEG = 78;
 const VERTICAL_FOV_RANGE_DEG: [number, number] = [48, 62];
@@ -27,7 +127,7 @@ export type GraphicsQuality = 'high' | 'low';
 
 export interface SceneManagerOptions {
   /**
-   * Loads street.glb centered on the origin for a standalone preview (default true).
+   * Loads street_enhanced.glb centered on the origin for a standalone preview (default true).
    * The game passes false: WorldBuilder places the asset aligned with the map grid.
    */
   autoloadStreetPreview?: boolean;
@@ -45,6 +145,12 @@ export class SceneManager {
   readonly flashlight: THREE.SpotLight;
 
   private readonly clock = new THREE.Clock();
+  private readonly environment: THREE.WebGLRenderTarget;
+  private readonly city: CityBuilder;
+  private readonly rain = createRain();
+  private readonly flashlightBeam: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
+  private readonly fog: THREE.FogExp2;
+  private readonly fill: THREE.HemisphereLight;
   private readonly moonLight: THREE.DirectionalLight;
   private readonly forwardDir = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
@@ -73,7 +179,8 @@ export class SceneManager {
   ) {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(NIGHT_SKY_COLOR);
-    this.scene.fog = new THREE.FogExp2(NIGHT_SKY_COLOR, FPV_FOG_DENSITY);
+    this.fog = new THREE.FogExp2(NIGHT_SKY_COLOR, FPV_FOG_DENSITY);
+    this.scene.fog = this.fog;
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -85,11 +192,11 @@ export class SceneManager {
     this.scene.add(this.camera);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 1.20;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
@@ -102,17 +209,23 @@ export class SceneManager {
       this.renderer.shadowMap.enabled = false;
       this.showSoftwareRenderingWarning();
     }
+    this.environment = createNightEnvironment(this.renderer);
+    this.scene.environment = this.environment.texture;
+    this.scene.environmentIntensity = 0.35;
+
+    this.city = new CityBuilder(this.renderer, this.scene);
+    this.scene.add(this.rain.drops);
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
 
     // Camera-mounted tactical flashlight (OFF by default; toggle with F)
-    this.flashlight = new THREE.SpotLight(0xfff1d6, 32, 34, Math.PI / 5.5, 0.5, 1.6);
-    this.flashlight.position.set(0.18, -0.15, -0.05);
+    this.flashlight = new THREE.SpotLight(0xfff0d9, 86, 36, Math.PI / 6.5, 0.55, 1.6);
+    this.flashlight.position.set(-0.23, 0.10, -0.09);
     this.flashlight.visible = false;
     this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.set(512, 512);
+    this.flashlight.shadow.mapSize.set(768, 768);
     this.flashlight.shadow.camera.near = 0.25;
-    this.flashlight.shadow.camera.far = 34;
+    this.flashlight.shadow.camera.far = 36;
     this.flashlight.shadow.bias = -0.0004;
     this.flashlight.shadow.normalBias = 0.02;
 
@@ -121,13 +234,17 @@ export class SceneManager {
     this.camera.add(flashlightTarget);
     this.flashlight.target = flashlightTarget;
     this.camera.add(this.flashlight);
+    const endOfBeam = flashlightTarget.position.clone().sub(this.flashlight.position)
+      .normalize().multiplyScalar(7.5).add(this.flashlight.position);
+    this.flashlightBeam = this.city.makeBeam(this.flashlight.position, endOfBeam, 3.05, 0xffe4ba, 0.035);
+    this.flashlightBeam.visible = false;
+    this.camera.add(this.flashlightBeam);
 
-    // Clear nocturnal ambience with moonlight and soft bounce
-    const hemisphereLight = new THREE.HemisphereLight(0x789cd6, 0x243044, 0.95);
-    hemisphereLight.name = 'scene-hemisphere-light';
-    this.scene.add(hemisphereLight);
+    this.fill = new THREE.HemisphereLight(0x6894cb, 0x19263f, 0.18);
+    this.fill.name = 'scene-hemisphere-light';
+    this.scene.add(this.fill);
 
-    this.moonLight = new THREE.DirectionalLight(0xb5d0ff, 1.3);
+    this.moonLight = new THREE.DirectionalLight(0xb5d0ff, 0.37);
     this.moonLight.name = 'scene-moon-light';
     this.moonLight.position.set(24, 42, 18);
     this.moonLight.castShadow = true;
@@ -171,6 +288,8 @@ export class SceneManager {
       return;
     }
 
+    const world = this.scene.getObjectByName('world');
+    if (world) this.city.apply(world);
     this.clock.start();
     this.sharpenTextures();
     if (this.quality === 'low') this.dropPointLights();
@@ -181,7 +300,7 @@ export class SceneManager {
       const dt = Math.min(this.clock.getDelta(), MAX_FRAME_DT);
 
       if (onUpdate) {
-        onUpdate(dt);
+        this.updateNightPreset(onUpdate, dt);
       } else if (this.previewWalkEnabled) {
         this.stepPreviewWalk(dt);
       }
@@ -192,11 +311,33 @@ export class SceneManager {
         this.moonLight.shadow.needsUpdate = true;
         moonShadowAge = 0;
       }
+      this.rain.time.value += dt;
+      this.camera.getWorldPosition(this.rain.center.value);
+      this.camera.getWorldDirection(this.rain.direction.value);
+      this.rain.flashlight.value = this.flashlight.visible ? 1 : 0;
+      this.flashlightBeam.visible = this.flashlight.visible;
+      this.city.update(dt);
       if (this.composer) this.composer.render(dt);
       else this.renderer.render(this.scene, this.camera);
     };
 
     animate();
+  }
+
+  private updateNightPreset(update: (dt: number) => void, dt: number): void {
+    // WorldStateView blends the mission presets. Scale the result for rendering.
+    const sky = this.scene.background;
+    if (sky instanceof THREE.Color) sky.multiplyScalar(1 / SKY_SCALE);
+    this.fog.color.multiplyScalar(1 / SKY_SCALE);
+    this.fog.density /= FOG_SCALE;
+    this.fill.intensity /= FILL_SCALE;
+    this.moonLight.intensity /= MOON_SCALE;
+    update(dt);
+    if (sky instanceof THREE.Color) sky.multiplyScalar(SKY_SCALE);
+    this.fog.color.multiplyScalar(SKY_SCALE);
+    this.fog.density *= FOG_SCALE;
+    this.fill.intensity *= FILL_SCALE;
+    this.moonLight.intensity *= MOON_SCALE;
   }
 
   /**
@@ -269,6 +410,7 @@ export class SceneManager {
       return;
     }
 
+    this.city.clear();
     this.scene.remove(this.previewGroup);
     this.previewGroup.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
@@ -289,13 +431,23 @@ export class SceneManager {
     }
 
     this.clearStreetPreview();
-    this.composer?.dispose();
     this.controls.dispose();
     window.removeEventListener('resize', this.onResizeBound);
     this.renderer.domElement.removeEventListener('click', this.onCanvasClickBound);
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
     document.removeEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    this.flashlightBeam.material.dispose();
+    this.city.dispose();
+    this.rain.drops.geometry.dispose();
+    this.rain.drops.material.dispose();
+    this.rain.map.dispose();
+    this.scene.environment = null;
+    this.environment.dispose();
+    if (this.composer) {
+      for (const pass of this.composer.passes) pass.dispose();
+      this.composer.dispose();
+    }
     this.renderer.dispose();
   }
 
@@ -310,6 +462,7 @@ export class SceneManager {
     ground.rotation.x = -Math.PI / 2;
     // Filler beyond the map, kept well under the street mesh so it never hides the road.
     ground.position.y = -0.3;
+    ground.castShadow = true;
     ground.receiveShadow = true;
     ground.name = 'base-night-ground';
     this.scene.add(ground);
@@ -343,6 +496,8 @@ export class SceneManager {
       this.addPreviewStreetLights(group);
       this.scene.add(group);
       this.previewGroup = group;
+      this.city.apply(group);
+      this.moonLight.shadow.needsUpdate = true;
 
       console.info(`[SceneManager] FPV preview loaded: ${assetUrl}`);
     } catch (error) {
@@ -396,6 +551,8 @@ export class SceneManager {
 
     this.scene.add(group);
     this.previewGroup = group;
+    this.city.apply(group);
+    this.moonLight.shadow.needsUpdate = true;
   }
 
   private stepPreviewWalk(dt: number): void {
@@ -481,7 +638,10 @@ export class SceneManager {
     this.camera.aspect = width / height;
     this.camera.fov = fovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
+    const pixelRatio = this.quality === 'low' ? 0.4 : Math.min(window.devicePixelRatio, 1.25);
+    this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height);
+    this.composer?.setPixelRatio(pixelRatio);
     this.composer?.setSize(width, height);
   }
 
@@ -497,7 +657,7 @@ export class SceneManager {
     ao.updateGtaoMaterial({ radius: 0.7, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 16 });
     ao.blendIntensity = 0.85;
     composer.addPass(ao);
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.32, 0.5, 0.82));
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.55, 0.40, 0.72));
     composer.addPass(new OutputPass());
     this.composer = composer;
   }

@@ -85,6 +85,13 @@ export const AGENT_MAX_HEALTH: Record<AgentRole, number> = {
   radio_survivor: 100,
 };
 
+const EXPLORER_SCREAM_HOLD_TICKS = 2;
+const EXPLORER_SCREAM_COOLDOWN_TICKS = 18;
+const EXPLORER_SCREAM_RADIUS = 16;
+const EXPLORER_SCREAM_INTENSITY = 0.85;
+const ZOMBIE_SCREAM_SOURCE_ID = 'zombie_scream';
+const ZOMBIE_SCREAM_ID_PATTERN = /^sound-zombie_scream-(.+)-(\d+)$/;
+
 export interface AgentRuntimeState {
   id: string;
   role: AgentRole;
@@ -105,6 +112,8 @@ export interface AgentRuntimeState {
   patrolWaypoints: GridCoord[];
   patrolIndex: number;
   stunnedUntilTick: number;
+  alertHoldUntilTick: number;
+  lastScreamTick: number;
   lastAlertBroadcastTick: number;
   lastMoveTick: number;
   lastAttackTick: number;
@@ -126,6 +135,7 @@ export interface AgentCycleOutput {
   snapshot: ExtendedAgentSnapshot;
   shouldBroadcastAlert: boolean;
   alertTarget: GridCoord | null;
+  emittedSound?: Omit<SoundEvent, 'id' | 'timestamp'> | null;
   planChanged: boolean;
   planChangeReason: string | null;
   searchExecuted: SearchStats | null;
@@ -201,6 +211,8 @@ export function createAgentRuntime(
     patrolWaypoints: patrolWaypoints.map((p) => ({ ...p })),
     patrolIndex: 0,
     stunnedUntilTick: -1,
+    alertHoldUntilTick: -1,
+    lastScreamTick: -100,
     lastAlertBroadcastTick: -100,
     lastMoveTick: -1,
     lastAttackTick: -100,
@@ -323,6 +335,7 @@ export class AgentBrain {
     const profile = AGENT_PROFILES[runtime.role];
     let shouldBroadcastAlert = false;
     let alertTarget: GridCoord | null = null;
+    let emittedSound: Omit<SoundEvent, 'id' | 'timestamp'> | null = null;
     let planChanged = false;
     let planChangeReason: string | null = null;
     let searchExecuted: SearchStats | null = null;
@@ -331,6 +344,7 @@ export class AgentBrain {
     // Dead agents never perceive, plan or move again.
     if (runtime.state === 'dead' || runtime.health <= 0) {
       runtime.state = 'dead';
+      runtime.alertHoldUntilTick = -1;
       runtime.currentPath = [];
       runtime.targetPosition = null;
       runtime.goalReason = 'dead';
@@ -338,6 +352,7 @@ export class AgentBrain {
         snapshot: toAgentSnapshot(runtime),
         shouldBroadcastAlert: false,
         alertTarget: null,
+        emittedSound: null,
         planChanged: false,
         planChangeReason: null,
         searchExecuted: null,
@@ -350,11 +365,13 @@ export class AgentBrain {
 
     if (runtime.stunnedUntilTick >= tick) {
       runtime.state = 'stunned';
+      runtime.alertHoldUntilTick = -1;
       runtime.goalReason = 'temporarily stunned';
       return {
         snapshot: toAgentSnapshot(runtime),
         shouldBroadcastAlert: false,
         alertTarget: null,
+        emittedSound: null,
         planChanged: false,
         planChangeReason: null,
         searchExecuted: null,
@@ -370,7 +387,18 @@ export class AgentBrain {
     // 2. Memory update & decay stage
     runtime.memoryStore.tick(tick);
 
-    const strongestSound = perception.strongestSound;
+    // Ignore only this agent's own scream echo and prioritize recursive alerts over zombie_scream.
+    const externalAudibleSounds = perception.audibleSounds.filter((sound) => {
+      if (sound.sourceId !== ZOMBIE_SCREAM_SOURCE_ID) return true;
+      const scopedMatch = ZOMBIE_SCREAM_ID_PATTERN.exec(sound.id);
+      if (scopedMatch) return scopedMatch[1] !== runtime.id;
+      return !(runtime.lastScreamTick === tick - 1 && sameCoord(runtime.position, sound.position));
+    });
+    const rawStrongestSound = externalAudibleSounds.length > 0 ? externalAudibleSounds[0] : null;
+    const strongestSound =
+      perception.receivedAlert && rawStrongestSound?.sourceId === ZOMBIE_SCREAM_SOURCE_ID
+        ? (externalAudibleSounds.find((sound) => sound.sourceId !== ZOMBIE_SCREAM_SOURCE_ID) ?? null)
+        : rawStrongestSound;
     const isDecoySound = strongestSound !== null && strongestSound.sourceId.startsWith('decoy');
     const decoyPriority =
       isDecoySound &&
@@ -386,6 +414,7 @@ export class AgentBrain {
       gridDistance(runtime.position, perception.visualTarget) <= 1.5;
 
     if (decoyPriority && strongestSound && !visualCloseContact) {
+      runtime.alertHoldUntilTick = -1;
       const perceived = computePerceivedSoundIntensity(runtime.position, strongestSound);
       const confidence = Math.min(1, 0.72 + perceived * 0.28);
       // Clear stale vision so the horde genuinely reconsiders toward the acoustic decoy.
@@ -458,12 +487,41 @@ export class AgentBrain {
         shouldBroadcastAlert = true;
         alertTarget = { ...perception.visualTarget };
         runtime.lastAlertBroadcastTick = tick;
-      } else if (strongestSound && strongestSound.intensity >= 0.6) {
+      } else if (
+        strongestSound &&
+        strongestSound.sourceId !== ZOMBIE_SCREAM_SOURCE_ID &&
+        strongestSound.intensity >= 0.6
+      ) {
         shouldBroadcastAlert = true;
         alertTarget = { ...strongestSound.position };
         runtime.lastAlertBroadcastTick = tick;
       }
     }
+
+    // Trigger explorer scream when spotting a distant target outside decoy override and cooldown.
+    if (
+      runtime.role === 'explorer' &&
+      !decoyPriority &&
+      perception.visualTarget !== null &&
+      !visualCloseContact &&
+      tick > runtime.alertHoldUntilTick &&
+      tick - runtime.lastScreamTick >= EXPLORER_SCREAM_COOLDOWN_TICKS
+    ) {
+      runtime.alertHoldUntilTick = tick + EXPLORER_SCREAM_HOLD_TICKS;
+      runtime.lastScreamTick = tick;
+      emittedSound = {
+        sourceId: ZOMBIE_SCREAM_SOURCE_ID,
+        position: { ...runtime.position },
+        radius: EXPLORER_SCREAM_RADIUS,
+        intensity: EXPLORER_SCREAM_INTENSITY,
+      };
+    }
+
+    if (runtime.role === 'explorer' && visualCloseContact) {
+      runtime.alertHoldUntilTick = -1;
+    }
+
+    const isScreamingHold = runtime.role === 'explorer' && tick <= runtime.alertHoldUntilTick;
 
     // 3. Decision stage (select state and goal based strictly on memory and local evidence)
     const previousTarget = runtime.targetPosition ? { ...runtime.targetPosition } : null;
@@ -508,6 +566,11 @@ export class AgentBrain {
       runtime.alertDepth = 0;
       desiredTarget = this.selectLocalPatrolTarget(runtime, graph, rng);
       runtime.goalReason = 'autonomous local patrol without global info';
+    }
+
+    if (isScreamingHold) {
+      runtime.state = 'alert';
+      runtime.goalReason = 'screaming to alert nearby infected';
     }
 
     const resolvedTarget = desiredTarget ? resolveWalkableTarget(graph, desiredTarget) : null;
@@ -570,7 +633,7 @@ export class AgentBrain {
       runtime.state === 'patrol' ? profile.patrolMoveEveryTicks : profile.activeMoveEveryTicks;
     const canMoveThisTick = tick - runtime.lastMoveTick >= moveInterval;
 
-    if (canMoveThisTick && runtime.currentPath.length > 1) {
+    if (!isScreamingHold && canMoveThisTick && runtime.currentPath.length > 1) {
       const nextStep = runtime.currentPath[1];
       if (graph.isWalkable(nextStep)) {
         runtime.position = { ...nextStep };
@@ -593,7 +656,7 @@ export class AgentBrain {
             : 0;
         runtime.targetPosition = null;
         runtime.currentPath = [];
-      } else if (freshTriggerSource !== 'vision' && !isDecoySound) {
+      } else if (!isScreamingHold && freshTriggerSource !== 'vision' && !isDecoySound) {
         // Arrived at last known evidence without finding a live target: clear stale memory.
         runtime.memoryStore.clearActiveTarget();
         runtime.targetPosition = null;
@@ -613,6 +676,7 @@ export class AgentBrain {
       snapshot: toAgentSnapshot(runtime),
       shouldBroadcastAlert,
       alertTarget,
+      emittedSound,
       planChanged,
       planChangeReason,
       searchExecuted,
@@ -657,6 +721,7 @@ export class AgentBrain {
       snapshot: toAgentSnapshot(runtime),
       shouldBroadcastAlert: false,
       alertTarget: null,
+      emittedSound: null,
       planChanged,
       planChangeReason,
       searchExecuted: null,

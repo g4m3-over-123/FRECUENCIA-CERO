@@ -14,11 +14,14 @@ const STEP_CADENCE = { base: 1.6, perMps: .22 };
 /** Bob amplitude at walking speed, in metres; it grows with speed up to BOB_MAX_GAIN. */
 const BOB_SIDE = .0055;
 const BOB_LIFT = .0045;
-const BOB_MAX_GAIN = 1.3;
-/** Part of the Reload clip where the left hand feeds one round (its first half raises the weapon). */
-const INSERT_CLIP = { from: .53, to: 1.66 };
-/** Timing in seconds; one round per simulation tick (about 0.385 s on the street map). */
-const RELOAD_TIMING = { raise: .34, perRound: .385, lower: .34 };
+const BOB_MAX_GAIN = 1.9;
+/**
+ * Part of the Reload clip for one round: the left hand rises, pushes the shell into the tube
+ * (0.56-1.11 s) and starts back down. The clip's ends are the hand resting low, off the weapon.
+ */
+const INSERT_CLIP = { from: .3, to: 1.35 };
+/** Seconds; matches the simulation (2 ticks + 1.5 ticks per round, 0.385 s ticks on the street). */
+const RELOAD_TIMING = { raise: .38, perRound: .58, lower: .38 };
 const WALK_SPEED = 3.2;
 /** Above this ground speed the weapon is lowered and tilted as when running. */
 const SPRINT_SPEED = 4.6;
@@ -81,14 +84,14 @@ export class WeaponView {
     const lift = (Math.abs(Math.cos(this.bobPhase)) - .5) * BOB_LIFT * gain * this.bobWeight;
     const run = this.sprintWeight;
     this.root.position.set(
-      REST.x + side + run * .012,
-      REST.y + lift - run * .022,
+      REST.x + side + run * .016,
+      REST.y + lift - run * .032,
       REST.z + this.recoil * .035 + run * .01,
     );
     this.root.rotation.set(
       this.recoil * .05 - run * .06,
       run * .08,
-      -side * 2.2 + run * .1,
+      -side * 2.6 + run * .14,
     );
     this.flashTimer = Math.max(0, this.flashTimer - dt);
     this.flash.intensity = this.flashTimer > 0 ? 21 : 0;
@@ -153,11 +156,7 @@ export class WeaponView {
     }
 
     const reload = this.clips.get('Reload')!;
-    const fps = 30;
-    for (const name of ['Insert0', 'Insert1']) {
-      this.clips.set(name, THREE.AnimationUtils.subclip(
-        reload, name, Math.round(INSERT_CLIP.from * fps), Math.round(INSERT_CLIP.to * fps), fps));
-    }
+    for (const name of ['Insert0', 'Insert1']) this.clips.set(name, trimClip(reload, name, INSERT_CLIP.from, INSERT_CLIP.to));
 
     const model = asset.scene;
     this.model = model;
@@ -225,7 +224,9 @@ export class WeaponView {
     action.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
     action.clampWhenFinished = !loop;
     action.setDuration(motion.seconds ?? motion.clip.duration).setEffectiveWeight(1).play();
-    if (this.current && this.current !== action) this.current.crossFadeTo(action, .045, false);
+    // Between rounds the hand travels from the weapon back down, so it needs a longer blend.
+    const fade = motion.clip.name.startsWith('Insert') ? .1 : .045;
+    if (this.current && this.current !== action) this.current.crossFadeTo(action, fade, false);
     this.current = action;
   }
 
@@ -247,3 +248,21 @@ export class WeaponView {
     for (const texture of textures) texture.dispose();
   }
 }
+
+/**
+ * Cuts [from, to] out of a clip keeping every track. AnimationUtils.subclip drops tracks with no
+ * key inside the range, which froze part of the left arm and left the hand short of the weapon.
+ */
+function trimClip(clip: THREE.AnimationClip, name: string, from: number, to: number): THREE.AnimationClip {
+  const tracks = clip.tracks.map((track) => {
+    const size = track.getValueSize();
+    const interpolant = track.createInterpolant();
+    const times = [from, ...Array.from(track.times).filter((t) => t > from && t < to), to];
+    const values = new Float32Array(times.length * size);
+    times.forEach((time, i) => values.set(interpolant.evaluate(time), i * size));
+    const TrackType = track.constructor as new (name: string, times: number[], values: Float32Array) => THREE.KeyframeTrack;
+    return new TrackType(track.name, times.map((time) => time - from), values);
+  });
+  return new THREE.AnimationClip(name, to - from, tracks);
+}
+
