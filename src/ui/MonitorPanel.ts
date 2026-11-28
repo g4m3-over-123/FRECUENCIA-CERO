@@ -8,6 +8,7 @@ const maps = {
   map_small: 'Barrio sur · 20 × 20',
   map_medium: 'Centro urbano · 32 × 32',
   map_large: 'Distrito industrial · 50 × 50',
+  map_industrial: 'Complejo industrial (Acto II)',
 } as const;
 
 export type MonitorMapId = keyof typeof maps;
@@ -28,7 +29,36 @@ export interface MonitorCallbacks {
   onDecoy?: () => void;
   onBarricade?: () => void;
   onMapChange?: (map: MapDefinition) => void;
+  /** Demo lifeline: jump straight to the start of an act. */
+  onActJump?: (act: MonitorAct) => void;
 }
+
+export type MonitorAct = 'act1' | 'act2';
+
+export interface CinematicCard {
+  kicker: string;
+  title: string;
+  body: string;
+  durationMs: number;
+  /** Optional clip under public/ (e.g. assets/cinematics/intro.mp4); used only if it exists. */
+  video?: string;
+}
+
+const OUTCOME_CARD_MS = 2800;
+const outcomeCards: Record<'victory' | 'defeat', Omit<CinematicCard, 'durationMs'>> = {
+  victory: {
+    kicker: 'Frecuencia restablecida',
+    title: 'Mara sale de la zona cero',
+    body: 'La señal del refugio guió la extracción. Esta noche, alguien respondió.',
+    video: 'assets/cinematics/victory.mp4',
+  },
+  defeat: {
+    kicker: 'Señal perdida',
+    title: 'El silencio se la llevó',
+    body: 'La ciudad volvió a callar. La radio sigue esperando a alguien más.',
+    video: 'assets/cinematics/defeat.mp4',
+  },
+};
 
 export interface MonitorSearchComparison {
   // Both results must use the same graph state and endpoints.
@@ -116,6 +146,9 @@ export class MonitorPanel {
   private agentSignature = '';
   private outcome: 'playing' | 'victory' | 'defeat' = 'playing';
   private dialogMode: 'start' | 'victory' | 'defeat' = 'start';
+  private cinematic?: HTMLElement;
+  private cinematicTimer?: number;
+  private finishCinematic?: () => void;
 
   constructor(
     container: HTMLElement,
@@ -169,6 +202,14 @@ export class MonitorPanel {
             <button type="button" data-control="pause">Pausar</button>
             <button type="button" data-control="restart">Reiniciar</button>
             <button type="button" data-control="mute" aria-pressed="false">Silenciar audio</button>
+          </div>
+        </section>
+
+        <section class="monitor-section" aria-labelledby="monitor-demo-title">
+          <div class="monitor-section-title"><h2 id="monitor-demo-title">Sustentación</h2><span class="monitor-meta">Saltos rápidos</span></div>
+          <div class="monitor-controls monitor-acts">
+            <button type="button" data-control="act1">Acto I: Calle y Farmacia</button>
+            <button type="button" data-control="act2">Acto II: Complejo Industrial (Escena 3)</button>
           </div>
         </section>
 
@@ -254,6 +295,62 @@ export class MonitorPanel {
     if (this.dialog.open) this.dialog.close();
   }
 
+  /**
+   * Full-screen cinematic card. Resolves after durationMs (or when the clip ends).
+   * A newer card cancels the previous one, which resolves immediately.
+   */
+  async playCinematic(card: CinematicCard): Promise<void> {
+    this.finishCinematic?.();
+    const overlay = document.createElement('div');
+    overlay.className = 'cinematic-card';
+    overlay.setAttribute('role', 'status');
+    overlay.innerHTML = `<div class="cinematic-inner"><p class="monitor-kicker"></p><h2></h2><p class="cinematic-body"></p><span class="cinematic-bar"></span></div>`;
+    overlay.querySelector('.monitor-kicker')!.textContent = card.kicker;
+    overlay.querySelector('h2')!.textContent = card.title;
+    overlay.querySelector('.cinematic-body')!.textContent = card.body;
+    overlay.style.setProperty('--cinematic-ms', `${card.durationMs}ms`);
+    this.cinematic = overlay;
+
+    const video = card.video ? await this.loadClip(card.video) : undefined;
+    if (this.cinematic !== overlay) return;
+    if (video) overlay.prepend(video);
+    document.body.appendChild(overlay);
+
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        window.clearTimeout(this.cinematicTimer);
+        if (this.finishCinematic === done) this.finishCinematic = undefined;
+        if (this.cinematic === overlay) this.cinematic = undefined;
+        overlay.classList.add('is-leaving');
+        window.setTimeout(() => overlay.remove(), 350);
+        resolve();
+      };
+      this.finishCinematic = done;
+      if (video) {
+        video.addEventListener('ended', done, { once: true });
+        video.play().catch(() => undefined);
+      }
+      this.cinematicTimer = window.setTimeout(done, video ? Math.max(card.durationMs, 15_000) : card.durationMs);
+    });
+  }
+
+  /** Returns a <video> only if the file exists and is really a video (Vite answers 404s with HTML). */
+  private async loadClip(path: string): Promise<HTMLVideoElement | undefined> {
+    try {
+      const url = `${import.meta.env.BASE_URL}${path}`;
+      const response = await fetch(url, { method: 'HEAD' });
+      if (!response.ok || !response.headers.get('content-type')?.startsWith('video/')) return undefined;
+      const video = document.createElement('video');
+      video.className = 'cinematic-video';
+      video.src = url;
+      video.muted = this.audio.isMuted();
+      video.playsInline = true;
+      return video;
+    } catch {
+      return undefined;
+    }
+  }
+
   update(snapshot: WorldSnapshot, telemetry: MonitorTelemetry = {}): void {
     this.snapshot = snapshot;
     this.telemetry = telemetry;
@@ -284,9 +381,12 @@ export class MonitorPanel {
 
     if (outcome !== this.outcome && outcome !== 'playing') {
       this.audio.stopAmbient();
-      this.showDialog(outcome);
-    } else if (outcome === 'playing' && this.outcome !== 'playing' && this.dialog.open) {
-      this.dialog.close();
+      void this.playCinematic({ ...outcomeCards[outcome], durationMs: OUTCOME_CARD_MS }).then(() => {
+        if (this.outcome === outcome) this.showDialog(outcome);
+      });
+    } else if (outcome === 'playing' && this.outcome !== 'playing') {
+      this.finishCinematic?.();
+      if (this.dialog.open) this.dialog.close();
     }
     this.outcome = outcome;
   }
@@ -305,6 +405,8 @@ export class MonitorPanel {
     connect(this.button('decoy'), callbacks.onDecoy);
     connect(this.button('barricade'), callbacks.onBarricade);
     connect(this.button('restart'), callbacks.onRestart && (() => this.restart()));
+    connect(this.button('act1'), callbacks.onActJump && (() => callbacks.onActJump?.('act1')));
+    connect(this.button('act2'), callbacks.onActJump && (() => callbacks.onActJump?.('act2')));
 
     this.collapse.addEventListener('click', () => {
       this.panels.hidden = !this.panels.hidden;

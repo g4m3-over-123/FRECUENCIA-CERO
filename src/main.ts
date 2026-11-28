@@ -1,5 +1,5 @@
 import './ui/styles.css';
-import type { GridCoord, SoundEvent } from './core/contracts.ts';
+import type { GridCoord, SceneId, SoundEvent } from './core/contracts.ts';
 import { parseMapDefinition } from './core/graph/mapLoader.ts';
 import { SimulationEngine, type ExtendedWorldSnapshot } from './core/gameplay/SimulationEngine.ts';
 import { MockWorld } from './dev/mockSnapshot.ts';
@@ -16,6 +16,7 @@ import { WorldStateView } from './render/world/WorldStateView.ts';
 import { GameHud } from './ui/GameHud.ts';
 import {
   MonitorPanel,
+  type MonitorAct,
   type MonitorMapId,
   type MonitorSearchComparison,
   type MonitorTelemetry,
@@ -23,7 +24,8 @@ import {
 
 /**
  * Integration entry point (shared base, coordinate changes with the team). URL parameters:
- *   ?map=map_street|map_small|map_medium|map_large   (default map_street)
+ *   ?map=map_street|map_industrial|map_small|map_medium|map_large   (default map_street)
+ *   ?scene=1..5    initial storyboard scene (default 1; Act II starts at 3)
  *   ?mock=1        fake snapshots instead of the SimulationEngine (render/HUD work)
  *   ?seed=1337     simulation seed
  *   ?autostart=1   skip the start dialog (demos, headless checks)
@@ -35,7 +37,47 @@ const mapId = params.get('map') ?? 'map_street';
 const useMock = params.get('mock') === '1';
 const autostart = params.get('autostart') === '1';
 const seed = Number(params.get('seed') ?? 1337);
-const KNOWN_MAPS: readonly MonitorMapId[] = ['map_street', 'map_small', 'map_medium', 'map_large'];
+const initialScene = parseScene(params.get('scene'));
+const KNOWN_MAPS: readonly MonitorMapId[] = ['map_street', 'map_industrial', 'map_small', 'map_medium', 'map_large'];
+
+/** Act I (street + pharmacy) hands over to Act II (industrial complex, scene 3) at the avenue exit. */
+const ACT_TRANSITION_MS = 3000;
+const RADIO_CUT_MS = 4000;
+const INTRO_CUT_MS = 3500;
+
+function parseScene(raw: string | null): SceneId {
+  const value = Number(raw ?? 1);
+  return (Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1) as SceneId;
+}
+
+function actUrl(act: MonitorAct): string {
+  const query = new URLSearchParams();
+  query.set('map', act === 'act1' ? 'map_street' : 'map_industrial');
+  query.set('scene', act === 'act1' ? '1' : '3');
+  query.set('autostart', '1');
+  if (params.has('seed')) query.set('seed', String(seed));
+  if (params.get('xray') === '1') query.set('xray', '1');
+  return `${window.location.pathname}?${query.toString()}`;
+}
+
+function introCard(id: string, scene: SceneId) {
+  if (id === 'map_industrial') {
+    return {
+      kicker: `Acto II · Escena ${scene}`,
+      title: 'Complejo industrial',
+      body: 'Con los medicamentos a salvo, Mara necesita combustible y una batería. La horda ya la escucha.',
+      durationMs: INTRO_CUT_MS,
+      video: 'assets/cinematics/act2.mp4',
+    };
+  }
+  return {
+    kicker: 'Acto I · Frecuencia Cero',
+    title: 'Calle y farmacia',
+    body: 'Cuarenta y dos noches de silencio. Domina el ruido y llega a la farmacia.',
+    durationMs: INTRO_CUT_MS,
+    video: 'assets/cinematics/intro.mp4',
+  };
+}
 
 const key = (cell: GridCoord): string => `${cell.row},${cell.col}`;
 
@@ -75,7 +117,7 @@ async function bootstrap(): Promise<void> {
   const world = new WorldBuilder(scene);
   await world.build(map);
 
-  const source: SimulationSource = useMock ? new MockWorld(map, seed) : new SimulationEngine(map, 1, { seed });
+  const source: SimulationSource = useMock ? new MockWorld(map, seed) : new SimulationEngine(map, initialScene, { seed });
   const loop = new GameLoop(source, tickMsForMap(map));
 
   const worldState = new WorldStateView(scene, map);
@@ -152,11 +194,70 @@ async function bootstrap(): Promise<void> {
     weapon.setEnabled(playing);
   };
 
+  // Cinematic cuts: intro (first start), radio activated (4 s pause), act handover. Victory/defeat live in MonitorPanel.
+  let introShown = false;
+  let radioWasActive = loop.latest().radioActivated ?? false;
+  let actTransition = false;
+  const playIntro = (): void => {
+    if (introShown) return;
+    introShown = true;
+    void panel.playCinematic(introCard(map.id, initialScene));
+  };
+
   const startGame = (): void => {
     loop.start();
     setPlaying(true);
     sceneManager.lockPointer();
+    playIntro();
   };
+
+  loop.onTick((snapshot) => {
+    const radio = snapshot.radioActivated ?? false;
+    if (radio && !radioWasActive && snapshot.status === 'playing') {
+      source.setPaused(true);
+      loop.refresh();
+      setPlaying(false);
+      void panel
+        .playCinematic({
+          kicker: 'Radio activada',
+          title: 'La extracción está abierta',
+          body: 'La señal del refugio abrió una ruta de escape temporal. Corre antes de que se cierre.',
+          durationMs: RADIO_CUT_MS,
+        })
+        .then(() => {
+          if (loop.latest().status !== 'playing') return;
+          source.setPaused(false);
+          loop.refresh();
+          setPlaying(true);
+        });
+    }
+    radioWasActive = radio;
+
+    if (
+      map.id === 'map_street' &&
+      !actTransition &&
+      snapshot.status === 'playing' &&
+      snapshot.mara.hasMedicalKit &&
+      Math.max(
+        Math.abs(snapshot.mara.position.row - map.extractionPoint.row),
+        Math.abs(snapshot.mara.position.col - map.extractionPoint.col)
+      ) <= 1
+    ) {
+      actTransition = true;
+      source.setPaused(true);
+      loop.refresh();
+      setPlaying(false);
+      sceneManager.unlockPointer();
+      void panel
+        .playCinematic({
+          kicker: 'Acto I completado',
+          title: 'Rumbo al complejo industrial',
+          body: 'Mara deja la avenida con los medicamentos. El combustible y la batería esperan entre las naves.',
+          durationMs: ACT_TRANSITION_MS,
+        })
+        .then(() => window.location.assign(actUrl('act2')));
+    }
+  });
 
   const panel = new MonitorPanel(
     hudContainer,
@@ -164,7 +265,9 @@ async function bootstrap(): Promise<void> {
       onStart: startGame,
       onRestart: () => {
         comparisons.clear();
+        if (source instanceof SimulationEngine) source.setScene(initialScene);
         loop.reset();
+        radioWasActive = loop.latest().radioActivated ?? false;
         player.spawn(map.spawnMara);
         startGame();
       },
@@ -194,6 +297,7 @@ async function bootstrap(): Promise<void> {
         query.set('map', next.id);
         window.location.search = query.toString();
       },
+      onActJump: (act) => window.location.assign(actUrl(act)),
     },
     new AudioManager(cueForSound)
   );
@@ -235,6 +339,7 @@ async function bootstrap(): Promise<void> {
     panel.closeDialog();
     loop.start();
     setPlaying(true);
+    playIntro();
   }
 
   let lastStatus = loop.latest().status;
