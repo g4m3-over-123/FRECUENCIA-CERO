@@ -26,3 +26,7 @@ Thumbs.db
 !public/assets/
 !public/maps/
 !src/benchmarks/results/*.csv
+
+# Packaging (npm run package)
+release/
+packaging/.cache/

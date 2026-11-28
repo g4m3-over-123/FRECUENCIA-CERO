@@ -45,6 +45,14 @@ Parámetros de URL:
 | `?autostart=1` | Salta el diálogo de inicio |
 | `?mock=1` | Datos falsos en lugar del motor (para trabajar el render sin la IA) |
 
+## Empaquetar para entregar (doble clic)
+
+```bash
+npm run package    # genera release/Z3R0-FRECUENCY.zip
+```
+
+El .zip trae el juego compilado y un lanzador por sistema: `Jugar-Mac.command` (Apple Silicon e Intel), `Jugar-Windows.exe` y `Jugar-Linux`. El lanzador levanta un servidor local y abre el navegador (abrir `index.html` directo no funciona: el navegador bloquea los mapas y modelos desde `file://`). Las instrucciones para quien lo recibe estan en `packaging/LEEME.txt`. La primera vez descarga Go en `packaging/.cache` para compilar los lanzadores.
+
 ## Prueba de aceptación en vivo
 
 1. Abrir `http://localhost:5173/?xray=1` e iniciar la partida.
