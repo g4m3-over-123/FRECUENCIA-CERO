@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GUNSHOT_SOURCE_ID } from '../core/contracts.ts';
 import type { AgentState, GridCoord, MapDefinition, SoundEvent, WorldSnapshot } from '../core/contracts.ts';
 import { gridToWorld } from '../core/world/gridSpace.ts';
+import { EXPLORER_SCREAM, explorerScreamAt } from './characters/explorerScream.ts';
 
 const gains = {
   step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.52,
@@ -20,6 +21,7 @@ const sourceCues: Readonly<Record<string, SoundCue>> = {
   mara: 'step', step: 'step', mara_step: 'step', mara_sprint: 'step',
   metal_door: 'metal_door', pharmacy_metal_door: 'metal_door',
   decoy: 'decoy', zombie_alert: 'zombie_alert', barricade: 'barricade',
+  [EXPLORER_SCREAM]: 'zombie_alert',
   barricade_place: 'barricade', radio: 'radio',
 };
 
@@ -29,6 +31,7 @@ const combatCues: readonly SoundCue[] = [
 ];
 const MAX_VOICES = 12;
 const MAX_DISTANCE = 36;
+const SCREAM_VOICE_MS = 1000; // The reused zombie_alert clip lasts just under a second.
 
 interface SpatialScene {
   camera: THREE.Camera;
@@ -52,6 +55,7 @@ interface HeardAgent {
   state: AgentState;
   health: number;
   growledAt: number;
+  screamedAt: number;
   idledAt: number;
   nextGrowl: GrowlCue;
 }
@@ -101,6 +105,7 @@ export class AudioManager {
   private readonly agents = new Map<string, HeardAgent>();
   private readonly cameraPosition = new THREE.Vector3();
   private activeAlerts = new Set<string>();
+  private readonly pendingExplorerAlerts = new Map<string, { tick: number; position: GridCoord }>();
   private listener?: THREE.AudioListener;
   private lastTick = -1;
   private generation = 0;
@@ -167,6 +172,7 @@ export class AudioManager {
     this.lastTick = -1;
     this.playedSounds.clear();
     this.activeAlerts.clear();
+    this.pendingExplorerAlerts.clear();
     this.agents.clear();
     this.stopVoices();
     for (const [cue, { element }] of this.clips) if (cue !== 'ambient') element.pause();
@@ -181,16 +187,8 @@ export class AudioManager {
     }
     this.lastTick = snapshot.tick;
 
-    for (const sound of snapshot.soundEvents) {
-      const repeated = this.playedSounds.has(sound.id);
-      this.playedSounds.set(sound.id, snapshot.tick);
-      // The local weapon already played the shot when the engine accepted it.
-      if (repeated || snapshot.paused || sound.sourceId === GUNSHOT_SOURCE_ID) continue;
-      const cue = this.cueForSound(sound) ?? defaultCue(sound);
-      if (cue) this.playAt(cue, this.worldPosition(sound.position, .8));
-    }
-
     const seen = new Set<string>();
+    const screamOrigins = new Map<string, string>();
     for (const agent of snapshot.agents) {
       if (agent.role === 'radio_survivor') continue;
       seen.add(agent.id);
@@ -198,6 +196,12 @@ export class AudioManager {
       const state = agent.health <= 0 ? 'dead' : agent.state;
       const seed = agentSeed(agent.id);
       let growledAt = previous?.growledAt ?? -Infinity;
+      let screamedAt = previous?.screamedAt ?? -Infinity;
+      const scream = explorerScreamAt(agent, snapshot.soundEvents);
+      if (scream) {
+        screamOrigins.set(scream.id, agent.id);
+        if (!snapshot.paused && !this.playedSounds.has(scream.id)) screamedAt = snapshot.elapsedMs;
+      }
       let idledAt = previous?.idledAt ?? (snapshot.elapsedMs - (seed % 5) * 1500);
       let nextGrowl: GrowlCue = previous?.nextGrowl ?? (seed % 2 === 0 ? 'growl' : 'zombie_growl_2');
       if (state === 'dead' && previous && previous.state !== 'dead') this.stopAgentVoices(agent.id);
@@ -214,9 +218,10 @@ export class AudioManager {
           this.playAt('zombie_attack', this.worldPosition(agent.position, 1.45), agent.id);
           growledAt = snapshot.elapsedMs;
         } else if (
-          (state === 'pursue' || state === 'alert') &&
+          (state === 'pursue' || (state === 'alert' && agent.role !== 'explorer')) &&
           state !== previous.state &&
-          snapshot.elapsedMs - growledAt >= 950
+          snapshot.elapsedMs - growledAt >= 950 &&
+          snapshot.elapsedMs - screamedAt >= SCREAM_VOICE_MS
         ) {
           this.playAt(nextGrowl, this.worldPosition(agent.position, 1.45), agent.id);
           nextGrowl = nextGrowl === 'growl' ? 'zombie_growl_2' : 'growl';
@@ -229,12 +234,33 @@ export class AudioManager {
           idledAt = snapshot.elapsedMs;
         }
       }
-      this.agents.set(agent.id, { state, health: agent.health, growledAt, idledAt, nextGrowl });
+      this.agents.set(agent.id, { state, health: agent.health, growledAt, screamedAt, idledAt, nextGrowl });
     }
     for (const id of this.agents.keys()) {
       if (seen.has(id)) continue;
       this.agents.delete(id);
       this.stopAgentVoices(id);
+    }
+
+    for (const sound of snapshot.soundEvents) {
+      const repeated = this.playedSounds.has(sound.id);
+      this.playedSounds.set(sound.id, snapshot.tick);
+      // The local weapon already played the shot when the engine accepted it.
+      if (repeated || snapshot.paused || sound.sourceId === GUNSHOT_SOURCE_ID) continue;
+      const cue = this.cueForSound(sound) ?? defaultCue(sound);
+      if (!cue) continue;
+      const isScream = sound.sourceId === EXPLORER_SCREAM;
+      this.playAt(cue, this.worldPosition(sound.position, isScream ? 1.4 : .8), screamOrigins.get(sound.id));
+    }
+
+    for (const [id, pending] of this.pendingExplorerAlerts) {
+      if (snapshot.paused || pending.tick === snapshot.tick) continue;
+      this.pendingExplorerAlerts.delete(id);
+      const heard = this.agents.get(id);
+      if (!heard || heard.state === 'dead' || heard.state === 'stunned') continue;
+      if (snapshot.elapsedMs - heard.screamedAt >= SCREAM_VOICE_MS) {
+        this.playAt('zombie_alert', this.worldPosition(pending.position, 1.4), id);
+      }
     }
 
     const activeAlerts = new Set<string>();
@@ -243,10 +269,14 @@ export class AudioManager {
       const repeated = this.activeAlerts.has(key) || activeAlerts.has(key);
       activeAlerts.add(key);
       if (snapshot.paused || repeated) continue;
-      const state = this.agents.get(alert.originAgentId)?.state;
-      if (state && state !== 'dead') {
-        const origin = snapshot.agents.find((agent) => agent.id === alert.originAgentId);
-        if (origin) this.playAt('zombie_alert', this.worldPosition(origin.position, 1.4), origin.id);
+      const heard = this.agents.get(alert.originAgentId);
+      const origin = snapshot.agents.find((agent) => agent.id === alert.originAgentId);
+      if (!origin || !heard || heard.state === 'dead' || snapshot.elapsedMs - heard.screamedAt < SCREAM_VOICE_MS) continue;
+      if (origin.role === 'explorer' && heard.state === 'alert') {
+        // A scream emitted with this horde alert arrives in the next sound snapshot.
+        this.pendingExplorerAlerts.set(origin.id, { tick: snapshot.tick, position: origin.position });
+      } else {
+        this.playAt('zombie_alert', this.worldPosition(origin.position, 1.4), origin.id);
       }
     }
     this.activeAlerts = activeAlerts;
