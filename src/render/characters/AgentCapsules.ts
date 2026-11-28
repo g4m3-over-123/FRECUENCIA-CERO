@@ -23,6 +23,8 @@ const ROLE_COLOR: Record<AgentRole, number> = {
 const LOOPS = new Set(['idle', 'walk', 'run']);
 /** Scales the 1.68-1.89 m models down to read as average adults next to the player's eye height. */
 const CHARACTER_SCALE = .9;
+const CALM_STATES = new Set<AgentState>(['idle', 'patrol', 'investigate']);
+const SCREAM_COOLDOWN_S = 8;
 
 interface ModelInstance {
   root: THREE.Object3D;
@@ -41,6 +43,8 @@ interface Body {
   health: number;
   alive: boolean;
   yaw: number;
+  screamUntil: number;
+  screamCooldownUntil: number;
 }
 
 function motionFor(state: AgentState, moving: boolean): string {
@@ -169,7 +173,17 @@ export class AgentCapsules implements AgentView {
     group.add(fallback);
     group.scale.setScalar(CHARACTER_SCALE);
     this.root.add(group);
-    const body = { group, fallback, role: agent.role, state: agent.state, health: agent.health, alive: true, yaw: 0 };
+    const body: Body = {
+      group,
+      fallback,
+      role: agent.role,
+      state: agent.state,
+      health: agent.health,
+      alive: true,
+      yaw: 0,
+      screamUntil: 0,
+      screamCooldownUntil: 0,
+    };
     this.bodies.set(agent.id, body);
     return body;
   }
@@ -201,7 +215,21 @@ export class AgentCapsules implements AgentView {
 
   private animate(body: Body, state: AgentState, moving: boolean, dt: number, restart: boolean): void {
     const model = body.model!;
-    const name = motionFor(state, moving);
+    const interrupt = state === 'dead' || state === 'stunned' || state === 'attack' || restart;
+    if (interrupt) body.screamUntil = 0;
+
+    const screamClip = model.clips.get('scream');
+    if (!interrupt && screamClip) {
+      const enteredAlert = state === 'alert' && body.state !== 'alert';
+      const enteredFromCalm = CALM_STATES.has(body.state) && (state === 'alert' || state === 'pursue');
+      if ((enteredAlert || enteredFromCalm) && this.elapsed >= body.screamCooldownUntil) {
+        body.screamUntil = this.elapsed + Math.max(0.1, screamClip.duration - 0.12);
+        body.screamCooldownUntil = this.elapsed + SCREAM_COOLDOWN_S;
+      }
+    }
+
+    const screaming = Boolean(screamClip) && this.elapsed < body.screamUntil;
+    const name = screaming ? 'scream' : motionFor(state, moving);
     const clip = model.clips.get(name) ?? model.clips.get('idle');
     if (clip && (restart || model.action?.getClip() !== clip)) {
       const action = model.mixer.clipAction(clip);
@@ -209,8 +237,12 @@ export class AgentCapsules implements AgentView {
       action.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
       action.clampWhenFinished = !loop;
       action.play();
-      if (model.action && model.action !== action) model.action.crossFadeTo(action, .10, false);
-      else if (state === 'dead' && body.state === 'dead') action.time = clip.duration;
+      if (model.action && model.action !== action) {
+        const fade = model.action.getClip().name === 'scream' && !interrupt ? 0.15 : 0.10;
+        model.action.crossFadeTo(action, fade, false);
+      } else if (state === 'dead' && body.state === 'dead') {
+        action.time = clip.duration;
+      }
       model.action = action;
     }
     model.mixer.update(dt);

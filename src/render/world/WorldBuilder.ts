@@ -73,7 +73,10 @@ export class WorldBuilder {
 
   private async loadAsset(map: MapDefinition): Promise<void> {
     const asset = map.world!.asset!;
-    const gltf = await new GLTFLoader().loadAsync(asset.url);
+    const assetUrl = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(asset.url)
+      ? asset.url
+      : `${import.meta.env.BASE_URL}${asset.url.replace(/^\//, '')}`;
+    const gltf = await new GLTFLoader().loadAsync(assetUrl);
     const model = gltf.scene;
     model.position.set(asset.offset[0], asset.offset[1], asset.offset[2]);
     model.scale.setScalar(asset.scale ?? 1);
