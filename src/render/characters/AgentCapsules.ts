@@ -21,6 +21,8 @@ const ROLE_COLOR: Record<AgentRole, number> = {
 };
 
 const LOOPS = new Set(['idle', 'walk', 'run']);
+/** Scales the 1.68-1.89 m models down to read as average adults next to the player's eye height. */
+const CHARACTER_SCALE = .9;
 
 interface ModelInstance {
   root: THREE.Object3D;
@@ -165,6 +167,7 @@ export class AgentCapsules implements AgentView {
     group.name = `agent-${agent.id}`;
     group.userData.agentId = agent.id;
     group.add(fallback);
+    group.scale.setScalar(CHARACTER_SCALE);
     this.root.add(group);
     const body = { group, fallback, role: agent.role, state: agent.state, health: agent.health, alive: true, yaw: 0 };
     this.bodies.set(agent.id, body);

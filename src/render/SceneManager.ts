@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -13,8 +14,8 @@ const FILL_SCALE = 0.165;
 const MOON_SCALE = 0.28;
 const FOG_SCALE = 2.5;
 const SKY_SCALE = 0.58;
-const EYE_HEIGHT_STANDING = 1.65;
-const EYE_HEIGHT_CROUCHING = 1.05;
+const EYE_HEIGHT_STANDING = 1.58;
+const EYE_HEIGHT_CROUCHING = 1.0;
 const CROUCH_SMOOTH_SPEED = 10;
 const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
@@ -114,6 +115,16 @@ function createRain() {
   return { drops, map, time, center, direction, flashlight };
 }
 
+/** Horizontal field of view kept on wide screens; a wider one stretches the screen edges. */
+const HORIZONTAL_FOV_DEG = 78;
+const VERTICAL_FOV_RANGE_DEG: [number, number] = [48, 62];
+/** Longest frame step; above it (tab switch, debugger) the game slows down instead of jumping. */
+const MAX_FRAME_DT = 0.25;
+/** WebGL running on the CPU: the browser has no hardware acceleration. */
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|software|microsoft basic render/i;
+
+export type GraphicsQuality = 'high' | 'low';
+
 export interface SceneManagerOptions {
   /**
    * Loads street_enhanced.glb centered on the origin for a standalone preview (default true).
@@ -134,7 +145,6 @@ export class SceneManager {
   readonly flashlight: THREE.SpotLight;
 
   private readonly clock = new THREE.Clock();
-  private readonly composer: EffectComposer;
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly city: CityBuilder;
   private readonly rain = createRain();
@@ -158,6 +168,11 @@ export class SceneManager {
   private readonly onKeyUpBound: (event: KeyboardEvent) => void;
   private readonly onPointerLockChangeBound: () => void;
 
+  /** 'low' when the browser renders WebGL in software (see detectSoftwareRenderer). */
+  readonly quality: GraphicsQuality;
+  readonly rendererName: string;
+  private composer: EffectComposer | null = null;
+
   constructor(
     private readonly container: HTMLElement,
     options: SceneManagerOptions = {}
@@ -170,7 +185,7 @@ export class SceneManager {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
-    this.camera = new THREE.PerspectiveCamera(72, width / height, 0.1, 180);
+    this.camera = new THREE.PerspectiveCamera(fovForAspect(width / height), width / height, 0.1, 180);
     this.camera.position.set(0, EYE_HEIGHT_STANDING, 8);
     this.camera.lookAt(0, EYE_HEIGHT_STANDING - 0.1, 0);
     // Add camera to scene so child lights (flashlight) affect world geometry
@@ -186,10 +201,14 @@ export class SceneManager {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.55, 0.40, 0.72));
-    this.composer.addPass(new OutputPass());
+    this.rendererName = readRendererName(this.renderer);
+    this.quality = SOFTWARE_RENDERER.test(this.rendererName) ? 'low' : 'high';
+    if (this.quality === 'low') {
+      // Software WebGL manages a few frames per second at full quality.
+      this.renderer.setPixelRatio(0.4);
+      this.renderer.shadowMap.enabled = false;
+      this.showSoftwareRenderingWarning();
+    }
     this.environment = createNightEnvironment(this.renderer);
     this.scene.environment = this.environment.texture;
     this.scene.environmentIntensity = 0.35;
@@ -231,7 +250,8 @@ export class SceneManager {
     this.moonLight.castShadow = true;
     this.moonLight.shadow.autoUpdate = false;
     this.moonLight.shadow.needsUpdate = true;
-    this.moonLight.shadow.mapSize.set(1024, 1024);
+    const moonShadowSize = this.quality === 'high' ? 4096 : 1024;
+    this.moonLight.shadow.mapSize.set(moonShadowSize, moonShadowSize);
     this.moonLight.shadow.camera.near = 1;
     this.moonLight.shadow.camera.far = 115;
     this.moonLight.shadow.camera.left = -38;
@@ -244,6 +264,7 @@ export class SceneManager {
     this.scene.add(this.moonLight);
 
     this.setupBaseGround();
+    if (this.quality === 'high') this.setupPostProcessing(width, height);
 
     this.onResizeBound = this.handleResize.bind(this);
     this.onCanvasClickBound = this.handleCanvasClick.bind(this);
@@ -270,11 +291,13 @@ export class SceneManager {
     const world = this.scene.getObjectByName('world');
     if (world) this.city.apply(world);
     this.clock.start();
+    this.sharpenTextures();
+    if (this.quality === 'low') this.dropPointLights();
 
     let moonShadowAge = 0;
     const animate = () => {
       this.animationFrameId = window.requestAnimationFrame(animate);
-      const dt = Math.min(this.clock.getDelta(), 0.1);
+      const dt = Math.min(this.clock.getDelta(), MAX_FRAME_DT);
 
       if (onUpdate) {
         this.updateNightPreset(onUpdate, dt);
@@ -294,7 +317,8 @@ export class SceneManager {
       this.rain.flashlight.value = this.flashlight.visible ? 1 : 0;
       this.flashlightBeam.visible = this.flashlight.visible;
       this.city.update(dt);
-      this.composer.render(dt);
+      if (this.composer) this.composer.render(dt);
+      else this.renderer.render(this.scene, this.camera);
     };
 
     animate();
@@ -318,7 +342,7 @@ export class SceneManager {
 
   /**
    * Updates Mara's FPV camera world position and smoothly interpolates eye height
-   * between standing (1.65m) and crouching (1.05m).
+   * between standing (1.58m) and crouching (1.0m).
    */
   setPlayerPose(x: number, z: number, isCrouching: boolean, dt: number): void {
     const targetHeight = isCrouching ? EYE_HEIGHT_CROUCHING : EYE_HEIGHT_STANDING;
@@ -420,8 +444,10 @@ export class SceneManager {
     this.rain.map.dispose();
     this.scene.environment = null;
     this.environment.dispose();
-    for (const pass of this.composer.passes) pass.dispose();
-    this.composer.dispose();
+    if (this.composer) {
+      for (const pass of this.composer.passes) pass.dispose();
+      this.composer.dispose();
+    }
     this.renderer.dispose();
   }
 
@@ -610,11 +636,86 @@ export class SceneManager {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
     this.camera.aspect = width / height;
+    this.camera.fov = fovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
-    const pixelRatio = Math.min(window.devicePixelRatio, 1.25);
+    const pixelRatio = this.quality === 'low' ? 0.4 : Math.min(window.devicePixelRatio, 1.25);
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height);
-    this.composer.setPixelRatio(pixelRatio);
-    this.composer.setSize(width, height);
+    this.composer?.setPixelRatio(pixelRatio);
+    this.composer?.setSize(width, height);
   }
+
+  /**
+   * Ambient occlusion darkens wall bases, corners and the ground under props; a light bloom
+   * lets lamps and glowing signs bleed into the fog. OutputPass applies tone mapping.
+   */
+  private setupPostProcessing(width: number, height: number): void {
+    const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, samples: 4 });
+    const composer = new EffectComposer(this.renderer, target);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const ao = new GTAOPass(this.scene, this.camera, width, height);
+    ao.updateGtaoMaterial({ radius: 0.7, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 16 });
+    ao.blendIntensity = 0.85;
+    composer.addPass(ao);
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.55, 0.40, 0.72));
+    composer.addPass(new OutputPass());
+    this.composer = composer;
+  }
+
+  /**
+   * Software WebGL shades every point light per pixel on the CPU; the lamps go and the
+   * ambient light rises so the street stays readable.
+   */
+  private dropPointLights(): void {
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.PointLight) obj.visible = false;
+      if (obj instanceof THREE.HemisphereLight) obj.intensity *= 1.8;
+    });
+  }
+
+  /** Full anisotropic filtering: ground and walls stay sharp at grazing angles. */
+  private sharpenTextures(): void {
+    const anisotropy = this.quality === 'high' ? this.renderer.capabilities.getMaxAnisotropy() : 1;
+    this.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture && value.anisotropy !== anisotropy) {
+            value.anisotropy = anisotropy;
+            value.needsUpdate = true;
+          }
+        }
+      }
+    });
+  }
+
+  private showSoftwareRenderingWarning(): void {
+    const note = document.createElement('div');
+    note.className = 'software-render-warning';
+    note.style.cssText =
+      'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:50;max-width:640px;' +
+      'padding:10px 14px;border-radius:8px;background:rgba(120,20,20,.92);color:#fff;' +
+      'font:13px/1.45 system-ui,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.4)';
+    note.innerHTML =
+      '<b>El navegador no usa la tarjeta grafica</b> (WebGL por software: ' + this.rendererName.replace(/[<>&]/g, '') + '). ' +
+      'El juego ira muy lento. En Chrome abre <code>chrome://settings/system</code> y activa la aceleracion por hardware; ' +
+      'si sigue igual, en <code>chrome://flags/#use-angle</code> elige <b>OpenGL</b> y reinicia. ' +
+      'Comprueba el resultado en <code>chrome://gpu</code>. ' +
+      '<button style="margin-left:6px;cursor:pointer">Cerrar</button>';
+    note.querySelector('button')!.addEventListener('click', () => note.remove());
+    document.body.appendChild(note);
+    console.warn(`[SceneManager] Software WebGL renderer: ${this.rendererName}. Low quality mode.`);
+  }
+}
+
+function fovForAspect(aspect: number): number {
+  const half = THREE.MathUtils.degToRad(HORIZONTAL_FOV_DEG / 2);
+  const vertical = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(half) / aspect));
+  return THREE.MathUtils.clamp(vertical, VERTICAL_FOV_RANGE_DEG[0], VERTICAL_FOV_RANGE_DEG[1]);
+}
+
+function readRendererName(renderer: THREE.WebGLRenderer): string {
+  const gl = renderer.getContext();
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  return String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
 }

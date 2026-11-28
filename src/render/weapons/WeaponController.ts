@@ -104,8 +104,9 @@ export class WeaponController {
     if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
     const ammo = this.targets.ammoInMagazine();
     this.send({ type: 'reload' });
-    if (this.targets.ammoInMagazine() > ammo) {
-      this.viewModel.reload();
+    const loaded = this.targets.ammoInMagazine() - ammo;
+    if (loaded > 0) {
+      this.viewModel.reload(loaded);
       this.playCue('reload');
     }
   };
