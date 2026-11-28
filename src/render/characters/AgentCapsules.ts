@@ -46,9 +46,15 @@ interface Body {
   screamId?: string;
 }
 
-function motionFor(role: AgentRole, state: AgentState, moving: boolean, operatingRadio: boolean): string {
+function motionFor(
+  role: AgentRole,
+  state: AgentState,
+  moving: boolean,
+  operatingRadio: boolean,
+  evacuating: boolean
+): string {
   if (role === 'radio_survivor') {
-    if (moving) return 'run';
+    if (moving || evacuating) return 'run';
     if (operatingRadio || state === 'alert') return 'scream';
     return 'idle';
   }
@@ -186,14 +192,19 @@ export class AgentCapsules implements AgentView {
       else if (!frame.current.paused) {
         body.screamId = explorerScreamAt(agent, frame.current.soundEvents)?.id ?? body.screamId;
       }
+      const evacuating =
+        agent.role === 'radio_survivor' &&
+        Boolean(frame.current.radioActivated) &&
+        state === 'alert';
       const operatingRadio =
         agent.role === 'radio_survivor' &&
         !moving &&
+        !evacuating &&
         frame.current.radioInstallProgress > 0 &&
         !frame.current.radioActivated;
       const hit = state === 'stunned' && agent.health < body.health;
       const newScream = body.screamId !== undefined && body.screamId !== previousScreamId;
-      if (body.model) this.animate(body, state, moving, dt, hit, newScream, operatingRadio);
+      if (body.model) this.animate(body, state, moving, dt, hit, newScream, operatingRadio, evacuating);
       else this.animateFallback(body.fallback, state);
       body.state = state;
       body.health = agent.health;
@@ -287,7 +298,8 @@ export class AgentCapsules implements AgentView {
     dt: number,
     hit: boolean,
     newScream: boolean,
-    operatingRadio: boolean
+    operatingRadio: boolean,
+    evacuating: boolean
   ): void {
     const model = body.model!;
     const scream = body.screamId === undefined ? undefined : model.clips.get('scream');
@@ -295,7 +307,7 @@ export class AgentCapsules implements AgentView {
     const screaming = scream !== undefined && (newScream || screamTime < scream.duration);
     const clip = screaming
       ? scream
-      : model.clips.get(motionFor(body.role, state, moving, operatingRadio)) ?? model.clips.get('idle');
+      : model.clips.get(motionFor(body.role, state, moving, operatingRadio, evacuating)) ?? model.clips.get('idle');
     const restart = hit || (screaming && newScream);
     if (clip && (restart || model.action?.getClip() !== clip)) {
       const action = model.mixer.clipAction(clip);
