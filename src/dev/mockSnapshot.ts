@@ -19,7 +19,17 @@ import type { ExtendedAgentSnapshot } from '../core/agents/AgentBrain.ts';
 import type { ExtendedMaraSnapshot } from '../core/gameplay/maraController.ts';
 import type { ActiveDecoy, ExtendedWorldSnapshot } from '../core/gameplay/SimulationEngine.ts';
 import type { WorldPickup } from '../core/gameplay/scenes.ts';
-import { consumeRound, createWeaponSnapshot, reloadWeapon } from '../core/gameplay/weapons.ts';
+import type { WeaponSnapshot } from '../core/contracts.ts';
+import {
+  DEFAULT_WEAPON,
+  WEAPON_ORDER,
+  consumeRound,
+  createWeaponSnapshot,
+  getWeaponDefinition,
+  isWeaponId,
+  reloadWeapon,
+  type WeaponId,
+} from '../core/gameplay/weapons.ts';
 import type { SimulationSource } from '../game/GameLoop.ts';
 
 /**
@@ -71,6 +81,7 @@ export class MockWorld implements SimulationSource {
   private barricades: GridCoord[] = [];
   private barricadeHistory: GridCoord[] = [];
   private decoys: ActiveDecoy[] = [];
+  private weaponInventory = new Map<WeaponId, WeaponSnapshot>();
   private refuge!: GridCoord;
   private pharmacy!: GridCoord;
 
@@ -95,6 +106,8 @@ export class MockWorld implements SimulationSource {
     this.logs = [];
     this.barricades = [];
     this.decoys = [];
+    this.weaponInventory.clear();
+    for (const id of WEAPON_ORDER) this.weaponInventory.set(id, createWeaponSnapshot(id));
     for (const b of this.barricadeHistory) this.graph.setBlocked(b, false);
     this.barricadeHistory = [];
 
@@ -118,7 +131,7 @@ export class MockWorld implements SimulationSource {
       barricadesRemaining: 3,
       posture: 'walk',
       facing: { row: 0, col: 1 },
-      weapon: createWeaponSnapshot(),
+      weapon: { ...this.weaponInventory.get(DEFAULT_WEAPON)! },
     };
 
     const far = this.walkable.filter(
@@ -295,10 +308,19 @@ export class MockWorld implements SimulationSource {
         const weapon = consumeRound(this.mara.weapon);
         if (!weapon) return;
         this.mara.weapon = weapon;
-        this.pendingSounds.push({ id: `mock-shot-${this.tick}-${weapon.ammoInMagazine}`, sourceId: GUNSHOT_SOURCE_ID, position: { ...this.mara.position }, radius: 20, intensity: 1, timestamp: this.tick + 1 });
+        this.weaponInventory.set(weapon.id as WeaponId, { ...weapon });
+        const def = getWeaponDefinition(weapon.id);
+        this.pendingSounds.push({
+          id: `mock-shot-${this.tick}-${weapon.ammoInMagazine}`,
+          sourceId: GUNSHOT_SOURCE_ID,
+          position: { ...this.mara.position },
+          radius: def.soundRadius,
+          intensity: def.soundIntensity,
+          timestamp: this.tick + 1,
+        });
         const target = this.agents.find((a) => a.id === command.hitAgentId);
         if (target && target.role !== 'radio_survivor' && target.state !== 'dead') {
-          target.health -= 35;
+          target.health -= def.damage;
           if (target.health <= 0) {
             target.state = 'dead';
             target.deadUntilTick = this.tick + 25;
@@ -309,7 +331,14 @@ export class MockWorld implements SimulationSource {
       }
       case 'reload':
         this.mara.weapon = reloadWeapon(this.mara.weapon);
+        this.weaponInventory.set(this.mara.weapon.id as WeaponId, { ...this.mara.weapon });
         break;
+      case 'switchWeapon': {
+        if (!isWeaponId(command.weaponId) || command.weaponId === this.mara.weapon.id) return;
+        this.weaponInventory.set(this.mara.weapon.id as WeaponId, { ...this.mara.weapon });
+        this.mara.weapon = { ...(this.weaponInventory.get(command.weaponId) ?? createWeaponSnapshot(command.weaponId)) };
+        break;
+      }
       case 'decoy':
         if (this.mara.decoysRemaining <= 0) return;
         this.mara.decoysRemaining--;

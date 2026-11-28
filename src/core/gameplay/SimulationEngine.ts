@@ -46,12 +46,19 @@ import {
   type MaraInputState,
 } from './maraController.ts';
 import {
+  DEFAULT_WEAPON,
+  WEAPON_ORDER,
   addAmmoToReserve,
+  cancelTimedReload,
   consumeRound,
+  createWeaponSnapshot,
   finishReload,
   getWeaponDefinition,
+  isWeaponId,
   startTimedReload,
+  type WeaponId,
 } from './weapons.ts';
+import type { WeaponSnapshot } from '../contracts.ts';
 import {
   buildSceneLayout,
   computeReachableDistances,
@@ -200,7 +207,9 @@ export class SimulationEngine {
   private barricades: GridCoord[] = [];
   private pickups: WorldPickup[] = [];
   private lootPickups: LootPickup[] = [];
+  private weaponInventory = new Map<WeaponId, WeaponSnapshot>();
   private reloadTicksRemaining = 0;
+  private reloadPendingRounds = 0;
   private pendingInteract = false;
   private lastRefugeDamageTick = -100;
   private refugePosition!: GridCoord;
@@ -507,6 +516,7 @@ export class SimulationEngine {
       return none;
     }
     this.mara.weapon = weapon;
+    this.syncActiveWeapon();
 
     const def = getWeaponDefinition(weapon.id);
     const sound = this.emitSound({
@@ -534,10 +544,34 @@ export class SimulationEngine {
     const started = startTimedReload(this.mara.weapon);
     if (!started) return false;
     this.mara.weapon = started.weapon;
+    this.reloadPendingRounds = started.rounds;
     this.reloadTicksRemaining = this.effectiveReloadDurationTicks(started.durationTicks);
+    this.syncActiveWeapon();
     this.pushLog(
       'gameplay',
       `Mara reloading ${started.weapon.id} (${this.reloadTicksRemaining} ticks) [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
+    );
+    return true;
+  }
+
+  /** Switches Mara's active weapon while preserving per-weapon ammo and cancelling mid-reload state. */
+  switchWeapon(weaponId: string): boolean {
+    if (this.status !== 'playing' || this.paused) return false;
+    if (!isWeaponId(weaponId) || this.mara.weapon.id === weaponId) return false;
+
+    if (this.mara.weapon.reloading) {
+      this.mara.weapon = cancelTimedReload(this.mara.weapon, this.reloadPendingRounds);
+      this.reloadTicksRemaining = 0;
+      this.reloadPendingRounds = 0;
+    }
+    this.syncActiveWeapon();
+
+    const next = this.weaponInventory.get(weaponId) ?? createWeaponSnapshot(weaponId);
+    this.mara.weapon = { ...next, reloading: false };
+    this.weaponInventory.set(weaponId, { ...this.mara.weapon });
+    this.pushLog(
+      'gameplay',
+      `Mara switched weapon to ${getWeaponDefinition(weaponId).label} [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
     );
     return true;
   }
@@ -576,6 +610,9 @@ export class SimulationEngine {
         break;
       case 'reload':
         this.reload();
+        break;
+      case 'switchWeapon':
+        this.switchWeapon(command.weaponId);
         break;
       case 'decoy':
         this.triggerDecoy(command.target);
@@ -625,6 +662,8 @@ export class SimulationEngine {
       this.reloadTicksRemaining--;
       if (this.reloadTicksRemaining === 0 && this.mara.weapon.reloading) {
         this.mara.weapon = finishReload(this.mara.weapon);
+        this.reloadPendingRounds = 0;
+        this.syncActiveWeapon();
         this.pushLog(
           'gameplay',
           `Reload complete [ammo=${this.mara.weapon.ammoInMagazine}/${this.mara.weapon.ammoReserve}]`
@@ -865,6 +904,7 @@ export class SimulationEngine {
     this.extractionOpen = sceneId === 5;
     this.pharmacyDoorTriggered = sceneId >= 3;
     this.reloadTicksRemaining = 0;
+    this.reloadPendingRounds = 0;
     this.pendingInteract = false;
     this.lastRefugeDamageTick = -100;
     this.algorithmComparison = {
@@ -887,6 +927,11 @@ export class SimulationEngine {
     this.lootPickups = layout.lootPickups;
     this.extractionTicksRemaining = sceneId === 5 ? this.computeExtractionWindowTicks() : null;
 
+    this.weaponInventory.clear();
+    for (const id of WEAPON_ORDER) {
+      this.weaponInventory.set(id, createWeaponSnapshot(id));
+    }
+
     this.mara = createInitialMaraSnapshot(this.map.spawnMara, {
       hasMedicalKit: sceneId >= 3,
       hasFuel: sceneId >= 4,
@@ -894,6 +939,7 @@ export class SimulationEngine {
       decoysRemaining: this.options.initialDecoys ?? 3,
       barricadesRemaining: this.options.initialBarricades ?? 3,
     });
+    this.mara.weapon = { ...this.weaponInventory.get(DEFAULT_WEAPON)! };
 
     this.agentRuntimes = layout.agents.map((spawn) =>
       createAgentRuntime(
@@ -910,6 +956,13 @@ export class SimulationEngine {
       'system',
       `Initialized Scene ${sceneId} (${preset.name}) on ${this.map.id} [seed=${this.seed}, algo=${this.algorithm}/${this.heuristic}, coord=${this.coordinationEnabled}]`
     );
+  }
+
+  private syncActiveWeapon(): void {
+    const id = this.mara.weapon.id;
+    if (isWeaponId(id)) {
+      this.weaponInventory.set(id, { ...this.mara.weapon });
+    }
   }
 
   private registerDecoy(sound: SoundEvent): void {
@@ -995,6 +1048,7 @@ export class SimulationEngine {
           if (this.mara.weapon.ammoReserve >= def.maxReserve) continue;
           loot.collected = true;
           this.mara.weapon = addAmmoToReserve(this.mara.weapon, loot.amount);
+          this.syncActiveWeapon();
           this.pushLog(
             'gameplay',
             `Ammo loot collected (+${loot.amount}) at (${loot.position.row},${loot.position.col}) [reserve=${this.mara.weapon.ammoReserve}]`

@@ -8,13 +8,28 @@ const gains = {
   step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.52,
   barricade: 0.45, radio: 0.48, ambient: 0.08,
   gunshot: 0.52, reload: 0.34, dry_fire: 0.21, impact: 0.42,
+  gunshot_spas12: 0.56, gunshot_m4: 0.50, gunshot_persuader: 0.48,
+  gunshot_mac10: 0.36, gunshot_sawnoff: 0.62,
+  reload_shotgun: 0.42, reload_m4: 0.38, reload_mag: 0.36, weapon_switch: 0.32,
   growl: 0.60, zombie_growl_2: 0.60, zombie_attack: 0.70,
   zombie_hurt: 0.62, zombie_death: 0.68, zombie_idle: 0.38,
 } as const;
 
 export type AudioCue = keyof typeof gains;
 type SoundCue = Exclude<AudioCue, 'ambient'>;
-type WeaponCue = 'gunshot' | 'reload' | 'dry_fire';
+type WeaponCue =
+  | 'gunshot'
+  | 'reload'
+  | 'dry_fire'
+  | 'gunshot_spas12'
+  | 'gunshot_m4'
+  | 'gunshot_persuader'
+  | 'gunshot_mac10'
+  | 'gunshot_sawnoff'
+  | 'reload_shotgun'
+  | 'reload_m4'
+  | 'reload_mag'
+  | 'weapon_switch';
 type GrowlCue = 'growl' | 'zombie_growl_2';
 
 const sourceCues: Readonly<Record<string, SoundCue>> = {
@@ -27,6 +42,8 @@ const sourceCues: Readonly<Record<string, SoundCue>> = {
 
 const combatCues: readonly SoundCue[] = [
   'gunshot', 'reload', 'dry_fire', 'impact',
+  'gunshot_spas12', 'gunshot_m4', 'gunshot_persuader', 'gunshot_mac10', 'gunshot_sawnoff',
+  'reload_shotgun', 'reload_m4', 'reload_mag', 'weapon_switch',
   'growl', 'zombie_alert', 'zombie_growl_2', 'zombie_attack', 'zombie_hurt', 'zombie_death', 'zombie_idle',
 ];
 const MAX_VOICES = 12;
@@ -335,7 +352,7 @@ export class AudioManager {
     source.buffer = buffer;
     panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
-    panner.refDistance = cue === 'gunshot' ? 2 : 1.6;
+    panner.refDistance = cue.startsWith('gunshot') ? 2 : 1.6;
     panner.maxDistance = MAX_DISTANCE;
     panner.rolloffFactor = 1.15;
     panner.positionX.value = position.x;
