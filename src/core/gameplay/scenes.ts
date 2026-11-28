@@ -2,6 +2,7 @@ import type { AgentRole, GridCoord, MapDefinition, SceneId } from '../contracts.
 import type { SeededRng } from '../graph/seededRng.ts';
 import type { WeightedGraph } from '../graph/WeightedGraph.ts';
 import { buildOpaqueCellSet, gridDistance, hasLineOfSight } from '../agents/perception.ts';
+import { runAStar } from '../algorithms/astar.ts';
 
 export interface ScenePreset {
   id: SceneId;
@@ -152,6 +153,155 @@ export function computeReachableDistances(
   return { reachable, distances, maxDistance };
 }
 
+/**
+ * Distances (in cells) that pace both acts. The chain gap stays below the engine alert radius
+ * (12 on fine grids, 7 on coarse ones) so every link of the pharmacy watch can relay an AlertHop.
+ */
+export interface ActSpacing {
+  /** Pharmacy watch ring: close enough to hear the metal door, far enough not to stand in the shop. */
+  ringMin: number;
+  ringMax: number;
+  /** Gap between consecutive watchers of the alert chain. */
+  chainMin: number;
+  chainMax: number;
+  /** Cells around each infected treated as closed when checking that an escape route survives. */
+  clearance: number;
+  /** No infected spawns this close to the refuge or the extraction point. */
+  keyPointGuard: number;
+  /** Escape corridor cells (from the pharmacy) kept free of flanking slots. */
+  escapeCorridor: number;
+}
+
+export function getActSpacing(map: Pick<MapDefinition, 'cellSize'>): ActSpacing {
+  return map.cellSize <= 1
+    ? { ringMin: 9, ringMax: 15, chainMin: 7, chainMax: 11, clearance: 2, keyPointGuard: 6, escapeCorridor: 8 }
+    : { ringMin: 4, ringMax: 7, chainMin: 3, chainMax: 6, clearance: 1, keyPointGuard: 3, escapeCorridor: 4 };
+}
+
+/** True when a path from -> goal exists with every cell within `clearance` of a threat closed. */
+export function hasEscapeRoute(
+  graph: WeightedGraph,
+  from: GridCoord,
+  goal: GridCoord,
+  threats: readonly GridCoord[],
+  clearance: number
+): boolean {
+  const probe = graph.clone();
+  for (const threat of threats) {
+    for (let dr = -clearance; dr <= clearance; dr++) {
+      for (let dc = -clearance; dc <= clearance; dc++) {
+        const cell = { row: threat.row + dr, col: threat.col + dc };
+        if (sameCoord(cell, from) || sameCoord(cell, goal) || !probe.isWalkable(cell)) continue;
+        probe.setBlocked(cell, true);
+      }
+    }
+  }
+  return runAStar(probe, from, goal, 'octile').found;
+}
+
+/** First cells of the shortest route out of `from`; flanking slots never land on them. */
+export function escapeCorridorCells(
+  graph: WeightedGraph,
+  from: GridCoord,
+  goal: GridCoord,
+  length: number
+): GridCoord[] {
+  const route = runAStar(graph, from, goal, 'octile');
+  return route.found ? route.path.slice(1, 1 + length).map((cell) => ({ ...cell })) : [];
+}
+
+/**
+ * Places infected around the pharmacy as a chain: each new watcher sits chainMin..chainMax from an
+ * existing link (so the door slam relays hop by hop) and as far as possible from the rest (so the
+ * recursion gets deeper than one hop). A candidate is rejected if it would seal every exit to escapeGoal.
+ */
+export function pickPharmacyWatchCells(
+  graph: WeightedGraph,
+  opaqueCells: ReadonlySet<number>,
+  pharmacy: GridCoord,
+  escapeGoal: GridCoord,
+  candidates: readonly GridCoord[],
+  anchors: readonly GridCoord[],
+  others: readonly GridCoord[],
+  count: number,
+  spacing: ActSpacing,
+  visionRange: number
+): GridCoord[] {
+  const ring = candidates.filter((cell) => {
+    const d = gridDistance(cell, pharmacy);
+    return (
+      d >= spacing.ringMin &&
+      d <= spacing.ringMax &&
+      !hasLineOfSight(graph, cell, pharmacy, visionRange, opaqueCells)
+    );
+  });
+  const chain: GridCoord[] = anchors.filter((a) => gridDistance(a, pharmacy) <= spacing.ringMax + spacing.chainMax);
+  const chosen: GridCoord[] = [];
+
+  while (chosen.length < count) {
+    const links = [...chain, ...chosen];
+    const pool = ring.filter(
+      (cell) =>
+        [...links, ...others].every((u) => gridDistance(u, cell) >= Math.min(3, spacing.chainMin)) &&
+        (links.length === 0 ||
+          links.some((l) => {
+            const d = gridDistance(l, cell);
+            return d >= spacing.chainMin && d <= spacing.chainMax;
+          }))
+    );
+    const spread = (cell: GridCoord): number => links.reduce((acc, l) => acc + gridDistance(l, cell), 0);
+    pool.sort((a, b) => spread(b) - spread(a));
+    const pick = pool.find((cell) =>
+      hasEscapeRoute(graph, pharmacy, escapeGoal, [...links, ...others, cell], spacing.clearance)
+    );
+    if (!pick) break;
+    chosen.push({ ...pick });
+  }
+  return chosen;
+}
+
+/**
+ * Act II (start at scene 3): fuel and battery go to the yard mirrored from the refuge across the map
+ * center, so the way back crosses the middle of the complex and its side doors.
+ */
+function pickOppositeSupplyCells(
+  graph: WeightedGraph,
+  candidates: readonly GridCoord[],
+  refuge: GridCoord,
+  spawn: GridCoord,
+  pharmacy: GridCoord,
+  extraction: GridCoord,
+  map: MapDefinition,
+  spacing: ActSpacing
+): { fuel: GridCoord; battery: GridCoord } | null {
+  const { distances, maxDistance } = computeReachableDistances(graph, refuge);
+  if (maxDistance === 0) return null;
+  const mirror: GridCoord = {
+    row: Math.max(0, Math.min(map.height - 1, map.height - 1 - refuge.row)),
+    col: Math.max(0, Math.min(map.width - 1, map.width - 1 - refuge.col)),
+  };
+  const pool = candidates.filter(
+    (cell) =>
+      (distances.get(coordKey(cell)) ?? 0) >= maxDistance * 0.55 &&
+      gridDistance(cell, extraction) >= spacing.keyPointGuard * 2 &&
+      gridDistance(cell, spawn) >= spacing.ringMax &&
+      gridDistance(cell, pharmacy) >= 3
+  );
+  const byMirror = (a: GridCoord, b: GridCoord): number =>
+    gridDistance(a, mirror) - gridDistance(b, mirror) || a.row - b.row || a.col - b.col;
+  const fuel = [...pool].sort(byMirror)[0];
+  if (!fuel) return null;
+  // Battery goes deeper into the same yard: the farthest walk from the refuge near the fuel.
+  const steps = (cell: GridCoord): number => distances.get(coordKey(cell)) ?? 0;
+  const battery = pool
+    .filter((cell) => {
+      const d = gridDistance(cell, fuel);
+      return d >= spacing.chainMin && d <= spacing.chainMax + 3;
+    })
+    .sort((a, b) => steps(b) - steps(a) || byMirror(a, b))[0];
+  return battery ? { fuel: { ...fuel }, battery: { ...battery } } : null;
+}
+
 function findClosestCellOfType(
   map: MapDefinition,
   type: MapDefinition['cells'][number]['type'],
@@ -175,11 +325,11 @@ function buildLocalPatrolWaypoints(
   walkableCells: readonly GridCoord[],
   safeAvoid: GridCoord,
   rng: SeededRng,
-  scale = 1
+  scale = 1,
+  avoidDist = 3 * scale
 ): GridCoord[] {
   const minDist = 2 * scale;
   const maxDist = 6 * scale;
-  const avoidDist = 3 * scale;
   const nearby = walkableCells.filter(
     (cell) =>
       gridDistance(origin, cell) >= minDist &&
@@ -299,7 +449,7 @@ export function buildSceneLayout(
   const fuelMinSpawn = useCorridorPacing
     ? Math.min(pharmacySteps + 2, Math.max(0, maxDistance - 4))
     : Math.min(3, Math.floor(map.width / 3));
-  const fuelPosition = pickByCorridorOrAnchor(0.62, center, fuelMinSpawn, [extractionPosition], 4);
+  let fuelPosition = pickByCorridorOrAnchor(0.62, center, fuelMinSpawn, [extractionPosition], 4);
 
   const batteryAnchor: GridCoord = {
     row: Math.min(map.height - 1, Math.floor(map.height * 0.65)),
@@ -308,13 +458,32 @@ export function buildSceneLayout(
   const batteryMinSpawn = useCorridorPacing
     ? Math.min(pharmacySteps + 4, Math.max(0, maxDistance - 3))
     : Math.min(4, Math.floor(map.width / 2));
-  const batteryPosition = pickByCorridorOrAnchor(
+  let batteryPosition = pickByCorridorOrAnchor(
     0.82,
     batteryAnchor,
     batteryMinSpawn,
     [extractionPosition, fuelPosition],
     4
   );
+
+  const spacing = getActSpacing(map);
+  if (sceneId === 3) {
+    const opposite = pickOppositeSupplyCells(
+      graph,
+      walkableCells.filter((cell) => !isReserved(cell)),
+      refugePosition,
+      map.spawnMara,
+      pharmacyPosition,
+      extractionPosition,
+      map,
+      spacing
+    );
+    if (opposite) {
+      fuelPosition = opposite.fuel;
+      batteryPosition = opposite.battery;
+      reserved.push(fuelPosition, batteryPosition);
+    }
+  }
 
   const pickups: WorldPickup[] = [
     {
@@ -414,17 +583,21 @@ export function buildSceneLayout(
     ? 10
     : Math.max(4, Math.min(7, Math.floor(Math.min(map.width, map.height) * 0.45)));
 
+  const awayFromKeyPoints = (cell: GridCoord): boolean =>
+    gridDistance(cell, refugePosition) >= spacing.keyPointGuard &&
+    gridDistance(cell, extractionPosition) >= spacing.keyPointGuard;
+
   const stealthSafeCandidates = walkableCells.filter(
     (cell) =>
       gridDistance(cell, map.spawnMara) >= minSpawnDist &&
-      !sameCoord(cell, refugePosition) &&
+      awayFromKeyPoints(cell) &&
       !hasLineOfSight(graph, cell, map.spawnMara, visionCheckRange, opaqueCells)
   );
 
   const midSafeCandidates = walkableCells.filter(
     (cell) =>
       gridDistance(cell, map.spawnMara) >= (isFineGrid ? 6 : 3) &&
-      !sameCoord(cell, refugePosition) &&
+      awayFromKeyPoints(cell) &&
       !hasLineOfSight(graph, cell, map.spawnMara, visionCheckRange, opaqueCells)
   );
 
@@ -468,19 +641,67 @@ export function buildSceneLayout(
   const explorerCount = Math.max(1, Math.round(preset.explorerCount * scale));
   const pursuerCount = Math.max(1, Math.round(preset.pursuerCount * scale));
 
+  // Act I: explorers watch the pharmacy as an alert chain so the metal door relays visibly.
+  // They stay off the direct approach so a careful player can still sneak in.
+  const hasPharmacy = sceneId <= 2 && map.cells.some((cell) => cell.type === 'pharmacy');
+  const approach = hasPharmacy ? runAStar(graph, map.spawnMara, pharmacyPosition, 'octile').path : [];
+  const offApproach = spawnPool.filter((cell) =>
+    approach.every((step) => gridDistance(step, cell) >= spacing.ringMin - 3)
+  );
+  const watchCells = hasPharmacy
+      ? pickPharmacyWatchCells(
+          graph,
+          opaqueCells,
+          pharmacyPosition,
+          extractionPosition,
+          offApproach,
+          [],
+          [],
+          explorerCount,
+          spacing,
+          visionCheckRange
+        )
+      : [];
+  usedSpawns.push(...watchCells);
+
+  // Act II: pursuers hold the middle band between the supplies and the refuge (the side doors).
+  const refugeSteps = sceneId === 3 ? computeReachableDistances(graph, refugePosition).distances : null;
+  const supplySteps = refugeSteps
+    ? Math.min(refugeSteps.get(coordKey(fuelPosition)) ?? 0, refugeSteps.get(coordKey(batteryPosition)) ?? 0)
+    : 0;
+  const takeMiddleSpawn = (): GridCoord | null => {
+    if (!refugeSteps || supplySteps === 0) return takeSpawn();
+    for (const candidate of spawnPool) {
+      const steps = refugeSteps.get(coordKey(candidate)) ?? 0;
+      if (
+        steps >= supplySteps * 0.35 &&
+        steps <= supplySteps * 0.75 &&
+        usedSpawns.every((u) => gridDistance(u, candidate) >= minSpacing)
+      ) {
+        usedSpawns.push(candidate);
+        return { ...candidate };
+      }
+    }
+    return takeSpawn();
+  };
+
   for (let i = 1; i <= explorerCount; i++) {
-    const pos = takeSpawn();
+    const watcher = watchCells[i - 1];
+    const pos = watcher ?? takeSpawn();
     if (!pos) break;
     agents.push({
       id: `explorer-${i}`,
       role: 'explorer',
       position: pos,
-      patrolWaypoints: buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
+      // Watchers patrol around the shop, never into it, so Mara can still sneak in and out.
+      patrolWaypoints: watcher
+        ? buildLocalPatrolWaypoints(pos, walkableCells, pharmacyPosition, rng, 1, spacing.ringMin - 1)
+        : buildLocalPatrolWaypoints(pos, walkableCells, map.spawnMara, rng, patrolScale),
     });
   }
 
   for (let i = 1; i <= pursuerCount; i++) {
-    const pos = takeSpawn();
+    const pos = takeMiddleSpawn();
     if (!pos) break;
     agents.push({
       id: `pursuer-${i}`,

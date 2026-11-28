@@ -105,7 +105,8 @@ export function assignDistributedTargets(
   graph: WeightedGraph,
   focus: GridCoord,
   convergingAgents: readonly AgentSnapshot[],
-  maxRing = 3
+  maxRing = 3,
+  keepClear: readonly GridCoord[] = []
 ): Map<string, GridCoord> {
   const assignments = new Map<string, GridCoord>();
   if (convergingAgents.length === 0) return assignments;
@@ -116,7 +117,10 @@ export function assignDistributedTargets(
       a.id.localeCompare(b.id)
   );
 
-  const slots = gatherFlankingSlots(graph, focus, maxRing);
+  // Slots next to keepClear cells (an escape corridor) are never handed out, so the horde can close in without sealing the exit.
+  const slots = gatherFlankingSlots(graph, focus, maxRing).filter(
+    (slot) => keepClear.every((cell) => gridDistance(slot, cell) > 1.5)
+  );
   if (slots.length === 0) {
     for (const agent of sortedAgents) {
       assignments.set(agent.id, { ...focus });
