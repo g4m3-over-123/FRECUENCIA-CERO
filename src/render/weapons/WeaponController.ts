@@ -11,6 +11,7 @@ import {
 } from '../../core/gameplay/weapons.ts';
 import { AudioManager } from '../AudioManager.ts';
 import type { SceneManager } from '../SceneManager.ts';
+import { CombatEffects } from './CombatEffects.ts';
 import { WeaponView } from './WeaponView.ts';
 
 const SWITCH_COOLDOWN_MS = 120;
@@ -38,7 +39,11 @@ export class WeaponController {
   private readonly raycaster = new THREE.Raycaster();
   private readonly aim = new THREE.Vector2();
   private readonly audioPosition = new THREE.Vector3();
+  private readonly muzzleOrigin = new THREE.Vector3();
+  private readonly hitNormal = new THREE.Vector3();
+  private readonly normalMatrix = new THREE.Matrix3();
   private readonly viewModel: WeaponView;
+  private readonly effects: CombatEffects;
   private readonly listeners = new Set<(shot: ShotResult) => void>();
   private activeWeaponId: WeaponId = DEFAULT_WEAPON;
   private lastShotMs = -Infinity;
@@ -51,6 +56,7 @@ export class WeaponController {
     private readonly send: (command: GameCommand) => void
   ) {
     this.viewModel = new WeaponView(sceneManager.camera);
+    this.effects = new CombatEffects(sceneManager.scene);
     this.raycaster.far = MAX_RANGE;
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('keydown', this.onKeyDown);
@@ -73,6 +79,7 @@ export class WeaponController {
       this.viewModel.setWeapon(simId);
     }
     this.viewModel.update(dt);
+    this.effects.update(dt);
   }
 
   switchWeapon(weaponId: string): boolean {
@@ -86,7 +93,8 @@ export class WeaponController {
   }
 
   fire(): ShotResult | null {
-    const def = getWeaponDefinition(this.currentWeaponId());
+    const weaponId = this.currentWeaponId();
+    const def = getWeaponDefinition(weaponId);
     const now = performance.now();
     if (!this.enabled || now - this.lastShotMs < def.fireCooldownMs) return null;
     this.lastShotMs = now;
@@ -98,9 +106,15 @@ export class WeaponController {
       return null;
     }
 
+    if (weaponId !== this.activeWeaponId) {
+      this.activeWeaponId = weaponId;
+      this.viewModel.setWeapon(weaponId);
+    }
+
     this.sceneManager.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(this.aim, this.sceneManager.camera);
-    const [hit] = this.raycaster.intersectObjects([...this.targets.agents(), ...this.targets.world()], true);
+    const worldTargets = this.targets.world();
+    const [hit] = this.raycaster.intersectObjects([...this.targets.agents(), ...worldTargets], true);
     let hitAgentId: string | null = null;
     for (let object: THREE.Object3D | null = hit?.object ?? null; object; object = object.parent) {
       if (typeof object.userData.agentId === 'string') {
@@ -109,10 +123,36 @@ export class WeaponController {
       }
     }
 
+    let hitNormal: THREE.Vector3 | null = null;
+    if (hit) {
+      if (hit.face) {
+        this.normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+        this.hitNormal.copy(hit.face.normal).applyMatrix3(this.normalMatrix).normalize();
+      } else {
+        this.hitNormal.copy(this.raycaster.ray.direction).negate();
+      }
+      if (this.hitNormal.dot(this.raycaster.ray.direction) > 0) {
+        this.hitNormal.negate();
+      }
+      hitNormal = this.hitNormal;
+    }
+
     this.send({ type: 'fire', hitAgentId });
     if (this.targets.ammoInMagazine() >= ammo) return null;
     this.viewModel.fire();
     this.playCue(def.fireAudioCue);
+
+    const origin = this.viewModel.muzzlePosition(this.muzzleOrigin);
+    this.effects.spawnShot({
+      weaponId,
+      origin,
+      direction: this.raycaster.ray.direction,
+      hitPoint: hit ? hit.point : null,
+      hitNormal,
+      hitAgentId,
+      worldTargets,
+    });
+
     const shot = { hitAgentId, point: hit?.point.clone() ?? null };
     for (const listener of this.listeners) listener(shot);
     return shot;
@@ -123,6 +163,7 @@ export class WeaponController {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('wheel', this.onWheel);
     this.viewModel.dispose();
+    this.effects.dispose();
     this.listeners.clear();
   }
 
