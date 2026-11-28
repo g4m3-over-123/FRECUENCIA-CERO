@@ -1,0 +1,69 @@
+Z3R0-FRECUENCY - El ultimo refugio
+==================================
+
+No hace falta instalar nada. Solo se necesita un navegador moderno
+(Chrome, Edge, Firefox o Safari) y descomprimir el .zip completo.
+
+Importante: no abra los archivos desde dentro del .zip. Primero
+descomprimalo (doble clic en el .zip) y entre a la carpeta Z3R0-FRECUENCY.
+
+
+COMO JUGAR
+----------
+
+macOS (Apple Silicon o Intel, macOS 12 o superior)
+  1. Doble clic en "Jugar-Mac.command".
+  2. La primera vez macOS avisa que el desarrollador no esta verificado
+     (el juego no esta firmado con una cuenta de Apple):
+       - Clic derecho (o Ctrl + clic) sobre "Jugar-Mac.command" > Abrir > Abrir.
+       - Si en macOS 15 o superior no aparece la opcion "Abrir": cierre el aviso,
+         vaya a Ajustes del Sistema > Privacidad y seguridad, baje hasta
+         "Se bloqueo Jugar-Mac.command" y pulse "Abrir igualmente".
+  3. Se abre una ventana de Terminal y el juego aparece en el navegador.
+
+Windows 10 u 11
+  1. Doble clic en "Jugar-Windows.exe".
+  2. Si aparece "Windows protegio su PC": pulse "Mas informacion" > "Ejecutar de todas formas".
+  3. Se abre una ventana negra y el juego aparece en el navegador.
+
+Linux
+  1. Doble clic en "Jugar-Linux" (o en una terminal: ./Jugar-Linux).
+
+La ventana de Terminal / consola debe quedar abierta mientras se juega:
+es el pequeno servidor local que entrega el juego al navegador. Para salir,
+cierre esa ventana. Si el navegador no se abre solo, copie la direccion que
+muestra la ventana (por ejemplo http://127.0.0.1:8642/).
+
+
+CONTROLES
+---------
+
+  Clic en "Iniciar partida" y luego en la pantalla para capturar el raton.
+
+  WASD          Moverse
+  Shift         Correr (hace ruido)
+  C             Agacharse (silencio)
+  Clic          Disparar (mucho ruido: atrae a la horda)
+  R             Recargar
+  Q             Lanzar senuelo sonoro
+  E             Poner barricada (el grafo cambia y los zombis replanifican)
+  F             Linterna
+  Tab           Rayos X: rutas, nodos expandidos, sonidos y alertas
+  V / Shift+V   En Rayos X: enfocar el siguiente zombi / ver todos
+  G             Ver la cuadricula logica
+  M             Mostrar u ocultar el panel de monitoreo (libera el raton)
+  P             Pausa
+  Esc           Liberar el raton
+
+  En el panel de monitoreo, seccion "Sustentacion", hay botones para saltar
+  directo al Acto I (calle y farmacia) o al Acto II (complejo industrial).
+
+
+CONTENIDO DE LA CARPETA
+-----------------------
+
+  Jugar-Mac.command    Lanzador para macOS
+  Jugar-Windows.exe    Lanzador para Windows
+  Jugar-Linux          Lanzador para Linux
+  juego/               El juego (HTML, JavaScript, modelos 3D y audio)
+  sistema/             Archivos internos del lanzador de macOS
