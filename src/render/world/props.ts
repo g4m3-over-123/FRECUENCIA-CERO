@@ -13,8 +13,10 @@ const canvas = surface(0x838065);
 const green = glow(0x65ffab);
 const amber = glow(0xffbc68);
 const blue = glow(0x76dfff);
+const tungsten = glow(0xffd294);
 const white = surface(0xeeeecc);
 const red = surface(0xb75024);
+const copper = surface(0xb3743c);
 const navy = surface(0x335674);
 
 function part(group: THREE.Group, material: THREE.Material, x: number, y: number, z: number,
@@ -230,6 +232,52 @@ export function mountPharmacyInterior(marker: THREE.Group, model: THREE.Group): 
   return room;
 }
 
+/** Normalizes and mounts portable_generator.glb flush along the wall beside the radio console. */
+export function mountRefugeStation(marker: THREE.Group, generator?: THREE.Group): THREE.Group {
+  const unit = new THREE.Group();
+  unit.name = 'refuge-generator';
+  if (generator) {
+    const materials = new Set<THREE.MeshStandardMaterial>();
+    generator.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      object.name = 'refuge-generator-' + object.name;
+      object.castShadow = true;
+      object.receiveShadow = true;
+      const surfaces = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of surfaces) {
+        if (material instanceof THREE.MeshStandardMaterial) materials.add(material);
+      }
+    });
+    for (const material of materials) {
+      material.roughness = Math.max(material.roughness, 0.78);
+      material.emissiveIntensity = 0;
+    }
+    const pivot = new THREE.Group();
+    pivot.add(generator);
+    pivot.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(pivot);
+    const rawSize = new THREE.Vector3();
+    rawBox.getSize(rawSize);
+    const maxSpan = Math.max(rawSize.x, rawSize.z);
+    const scale = maxSpan > 0 ? 0.95 / maxSpan : 1;
+    pivot.scale.setScalar(scale);
+    pivot.updateMatrixWorld(true);
+    const scaledBox = new THREE.Box3().setFromObject(pivot);
+    const scaledCenter = new THREE.Vector3();
+    scaledBox.getCenter(scaledCenter);
+    pivot.position.set(-scaledCenter.x, -scaledBox.min.y, -scaledCenter.z);
+    unit.add(pivot);
+  } else {
+    // Compact fallback generator frame when the GLB asset is unavailable.
+    part(unit, red, 0, 0.28, 0, 0.74, 0.42, 0.44);
+    part(unit, dark, 0, 0.50, 0, 0.78, 0.06, 0.48);
+    part(unit, steel, 0, 0.04, 0, 0.80, 0.08, 0.50);
+  }
+  unit.position.set(-0.98, 0, 0.24);
+  marker.add(unit);
+  return unit;
+}
+
 export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
   const group = new THREE.Group();
   group.name = kind;
@@ -251,24 +299,57 @@ export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
     part(sign, green, 0, 0, 0.12, 0.16, 0.53, 0.055);
     group.add(door, sign);
   } else if (kind === 'refuge') {
+    light.color.setHex(0xffb266);
+    light.intensity = 24;
+    light.distance = 14;
+    light.decay = 1.5;
+    light.position.set(0, 2.35, 0.75);
+
+    const workLight = new THREE.SpotLight(0xffc27a, 26, 10, Math.PI / 2.6, 0.68, 1.4);
+    workLight.name = 'refuge-work-light';
+    workLight.position.set(0, 2.72, 0.55);
+    workLight.target.position.set(0, 0.35, 1.15);
+    group.add(workLight, workLight.target);
+
+    // Overhead warm tungsten work-lamp arm and housing.
+    part(group, steel, 0, 2.80, 0.22, 0.05, 0.05, 0.56);
+    part(group, dark, 0, 2.78, 0.50, 0.42, 0.07, 0.22);
+    part(group, tungsten, 0, 2.73, 0.50, 0.34, 0.04, 0.14);
+
+    // Radio console cabinet, transceiver faceplate, battery dock, and antenna.
     part(group, dark, 0, 0.52, 0, 0.91, 1.04, 0.28);
     part(group, steel, 0, 0.96, 0.12, 0.85, 0.26, 0.13);
-    part(group, blue, -0.18, 0.98, 0.195, 0.29, 0.13, 0.02);
-    for (const x of [0.09, 0.19, 0.29]) part(group, dark, x, 0.94, 0.2, 0.06, 0.06, 0.04);
+    part(group, glow(0x76dfff), -0.18, 0.98, 0.195, 0.29, 0.13, 0.02).name = 'radio-screen';
+    for (const x of [0.09, 0.19, 0.29]) part(group, dark, x, 0.94, 0.20, 0.06, 0.06, 0.04);
+    part(group, steel, -0.22, 0.56, 0.145, 0.36, 0.26, 0.04);
+    part(group, dark, -0.22, 0.56, 0.165, 0.28, 0.18, 0.03);
+    for (const x of [-0.28, -0.16]) part(group, copper, x, 0.56, 0.182, 0.04, 0.08, 0.02);
     part(group, steel, 0.31, 1.96, 0, 0.032, 1.85, 0.032, drum);
     part(group, glow(0x65bfff), 0.31, 2.92, 0, 0.085, 0.12, 0.085, drum).name = 'radio-indicator';
-    for (let i = 0; i < 3; i++) {
-      part(group, canvas, -0.49, 0.12 + i * 0.17, 0, 0.28, 0.2, 0.26, drum).rotation.y = i;
-    }
+
+    // Power cables running flush along the wall base toward the portable generator.
+    part(group, dark, -0.58, 0.025, 0.14, 0.52, 0.03, 0.035);
+    part(group, red, -0.58, 0.025, 0.185, 0.50, 0.025, 0.025);
+    part(group, dark, -0.35, 0.28, 0.155, 0.03, 0.52, 0.03);
+
+    // Non-blocking emergency field crate/table flush along the wall.
+    part(group, wood, 0.84, 0.25, 0.14, 0.56, 0.50, 0.36);
+    part(group, dark, 0.84, 0.51, 0.14, 0.58, 0.04, 0.38);
+    part(group, steel, 0.84, 0.25, 0.325, 0.12, 0.08, 0.02);
+    part(group, canvas, 0.76, 0.555, 0.14, 0.24, 0.05, 0.20).rotation.y = 0.18;
+    part(group, amber, 0.99, 0.575, 0.16, 0.075, 0.09, 0.075, drum);
   } else {
     const lens = glow(0xff3b3b);
     light.color.copy(lens.color);
-    light.position.y = 3.25;
-    part(group, steel, 0, 1.45, 0, 0.16, 2.9, 0.16, drum);
-    part(group, dark, 0, 2.93, 0, 0.43, 0.12, 0.43, drum);
-    part(group, lens, 0, 3.16, 0, 0.31, 0.38, 0.31, drum).name = 'extraction-lens';
-    part(group, dark, 0, 3.39, 0, 0.42, 0.09, 0.42, drum);
-    part(group, lens, 0, 0.045, 0.48, 0.88, 1, 0.88, hoop).name = 'extraction-ring';
+    light.position.set(0, 4.2, 0.35);
+    light.distance = 28;
+    light.decay = 1.4;
+    part(group, dark, 0, 0.14, 0, 0.44, 0.28, 0.44);
+    part(group, steel, 0, 1.92, 0, 0.18, 3.84, 0.18, drum);
+    part(group, dark, 0, 3.85, 0, 0.50, 0.14, 0.50, drum);
+    part(group, lens, 0, 4.18, 0, 0.42, 0.58, 0.42, drum).name = 'extraction-lens';
+    part(group, dark, 0, 4.52, 0, 0.48, 0.10, 0.48, drum);
+    part(group, lens, 0, 0.045, 0.48, 1.28, 1, 1.28, hoop).name = 'extraction-ring';
   }
   return group;
 }

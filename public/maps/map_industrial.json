@@ -5,8 +5,8 @@
   "height": 40,
   "cellSize": 1,
   "spawnMara": {
-    "row": 1,
-    "col": 3
+    "row": 2,
+    "col": 15
   },
   "extractionPoint": {
     "row": 38,
@@ -427,7 +427,7 @@
     {
       "row": 1,
       "col": 24,
-      "type": "pharmacy",
+      "type": "street",
       "walkable": true,
       "cost": 1
     },
@@ -7101,7 +7101,7 @@
     {
       "row": 32,
       "col": 3,
-      "type": "street",
+      "type": "refuge",
       "walkable": true,
       "cost": 1
     },
@@ -7143,7 +7143,7 @@
     {
       "row": 32,
       "col": 9,
-      "type": "refuge",
+      "type": "street",
       "walkable": true,
       "cost": 1
     },

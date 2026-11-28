@@ -37,7 +37,10 @@ export class WorldStateView {
   private readonly moon?: THREE.DirectionalLight;
   private readonly beacon?: THREE.PointLight;
   private readonly lens?: Indicator;
+  private readonly refugeLight?: THREE.PointLight;
+  private readonly refugeWorkLight?: THREE.SpotLight;
   private readonly radio?: Indicator;
+  private readonly radioScreen?: Indicator;
   private previous?: ExtendedWorldSnapshot;
   private time = 0;
 
@@ -49,7 +52,10 @@ export class WorldStateView {
     this.moon = scene.getObjectByName('scene-moon-light') as THREE.DirectionalLight | undefined;
     this.beacon = scene.getObjectByName('zone-light-extraction') as THREE.PointLight | undefined;
     this.lens = scene.getObjectByName('extraction-lens') as Indicator | undefined;
+    this.refugeLight = scene.getObjectByName('zone-light-refuge') as THREE.PointLight | undefined;
+    this.refugeWorkLight = scene.getObjectByName('refuge-work-light') as THREE.SpotLight | undefined;
     this.radio = scene.getObjectByName('radio-indicator') as Indicator | undefined;
+    this.radioScreen = scene.getObjectByName('radio-screen') as Indicator | undefined;
   }
 
   getCollidables(): THREE.Object3D[] {
@@ -99,14 +105,31 @@ export class WorldStateView {
     if (this.beacon && this.lens) {
       const active = snapshot.sceneId === 5 || snapshot.extractionOpen || snapshot.extractionTicksRemaining !== null;
       this.beacon.color.copy(active ? open : closed);
-      const pulse = 0.5 + 0.5 * Math.sin(this.time * 4);
-      // The lens and ground ring share this material.
-      this.lens.material.color.copy(this.beacon.color);
-      this.beacon.intensity = 13 + 9 * pulse;
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * (active ? 5 : 4));
+      // The lens and ground ring share this material; HDR boost drives green Bloom when active.
+      this.lens.material.color.copy(this.beacon.color).multiplyScalar(active ? 1.8 + 0.8 * pulse : 1.0);
+      this.beacon.distance = active ? 28 : 16;
+      this.beacon.intensity = active ? 22 + 12 * pulse : 13 + 9 * pulse;
     }
-    if (this.radio) {
+    if (snapshot.radioActivated) {
+      this.radio?.material.color.copy(open).multiplyScalar(1.8);
+      this.radioScreen?.material.color.copy(open).multiplyScalar(1.35);
+      if (this.refugeLight) this.refugeLight.intensity = 24;
+      if (this.refugeWorkLight) this.refugeWorkLight.intensity = 26;
+    } else if (snapshot.radioInstallProgress > 0) {
+      const progress = Math.min(1, snapshot.radioInstallProgress / 100);
+      const fastPulse = 0.5 + 0.5 * Math.sin(this.time * (10 + 8 * progress));
+      const warmPulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+      this.radio?.material.color.copy(radioAmber).multiplyScalar(0.95 + 1.15 * fastPulse);
+      this.radioScreen?.material.color.copy(radioAmber).multiplyScalar(0.75 + 0.65 * fastPulse);
+      if (this.refugeLight) this.refugeLight.intensity = 21 + 6 * warmPulse;
+      if (this.refugeWorkLight) this.refugeWorkLight.intensity = 23 + 5 * warmPulse;
+    } else {
       const pulse = (1 + Math.cos(this.time * (snapshot.sceneId === 4 ? 5 : 2))) / 2;
-      this.radio.material.color.copy(radioBlue).lerp(radioAmber, pulse ** 6);
+      this.radio?.material.color.copy(radioBlue).lerp(radioAmber, pulse ** 6);
+      this.radioScreen?.material.color.copy(radioBlue);
+      if (this.refugeLight) this.refugeLight.intensity = 24;
+      if (this.refugeWorkLight) this.refugeWorkLight.intensity = 26;
     }
   }
 
