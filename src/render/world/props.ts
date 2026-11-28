@@ -99,63 +99,135 @@ export function streetLamps(mounts: THREE.Matrix4[]) {
   return group;
 }
 
-export function mountPharmacyStorefront(marker: THREE.Group, store: THREE.Group): THREE.Group {
-  const facade = new THREE.Group();
-  facade.name = 'pharmacy-storefront';
-  store.rotation.y = Math.PI / 2;
-  facade.add(store);
+function decoratePharmacy(room: THREE.Group): void {
+  const decor = new THREE.Group();
+  decor.name = 'pharmacy-decor';
 
-  const bounds = new THREE.Box3().setFromObject(facade);
-  const center = bounds.getCenter(new THREE.Vector3());
-  const size = bounds.getSize(new THREE.Vector3());
-  facade.scale.set(3.8 / size.x, 3.18 / size.y, 0.48);
-  facade.position.set(-center.x * facade.scale.x, 0.02 - bounds.min.y * facade.scale.y,
-    -0.24 - bounds.min.z * facade.scale.z);
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 384;
+  const ink = canvas.getContext('2d');
+  if (ink) {
+    ink.fillStyle = '#c5bba1';
+    ink.fillRect(0, 0, 512, 384);
+    for (const [x, y, radius] of [[28, 348, 54], [474, 12, 81], [490, 335, 62]]) {
+      const stain = ink.createRadialGradient(x, y, 0, x, y, radius);
+      stain.addColorStop(0, 'rgba(75, 59, 39, 0.50)');
+      stain.addColorStop(1, 'rgba(75, 59, 39, 0)');
+      ink.fillStyle = stain;
+      ink.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    ink.fillStyle = '#4f653c';
+    ink.fillRect(22, 30, 468, 64);
+    ink.fillStyle = '#f5eddb';
+    ink.font = 'bold 37px sans-serif';
+    ink.fillText('AVISO DE EVACUACIÓN', 39, 73);
+    ink.fillStyle = '#383827';
+    ink.font = 'bold 27px sans-serif';
+    ink.fillText('TURNO DE GUARDIA', 40, 146);
+    ink.font = '26px sans-serif';
+    ink.fillText('Reservar el último botiquín', 40, 198);
+    ink.fillText('para el refugio.', 40, 235);
+    ink.strokeStyle = '#817558';
+    ink.lineWidth = 2;
+    ink.beginPath();
+    ink.moveTo(40, 265);
+    ink.lineTo(468, 265);
+    ink.stroke();
+    ink.fillStyle = '#704238';
+    ink.font = 'bold 24px sans-serif';
+    ink.fillText('CIERRE DE EMERGENCIA', 40, 316);
 
+    const notice = new THREE.CanvasTexture(canvas);
+    notice.colorSpace = THREE.SRGBColorSpace;
+    const paper = new THREE.MeshStandardMaterial({ color: 0xb4ac9c, map: notice, roughness: 1 });
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(0.96, 0.72), paper);
+    board.position.set(1.325, 1.65, -1.27);
+    board.rotation.y = -Math.PI / 2;
+    decor.add(board);
+    part(decor, steel, 1.329, 1.98, -1.27, 0.015, 0.055, 0.92);
+  }
+
+  const palePaper = surface(0xa9a28b);
+  const oldCardboard = surface(0x9a8466);
+  const brownBottle = surface(0x734021);
+  const label = surface(0xb6b39c);
+  const fadedGreen = surface(0x617b55);
+  part(decor, dark, 1.253, 1.105, 1.13, 0.16, 0.035, 0.84);
+  for (const [z, height] of [[0.85, 0.19], [1.00, 0.15], [1.15, 0.22]]) {
+    part(decor, brownBottle, 1.225, 1.123 + height / 2, z, 0.085, height, 0.085, drum);
+    part(decor, label, 1.225, 1.157 + height / 2, z, 0.088, 0.048, 0.088, drum);
+    part(decor, dark, 1.225, 1.128 + height, z, 0.074, 0.032, 0.074, drum);
+  }
+  part(decor, oldCardboard, 1.227, 1.182, 1.44, 0.105, 0.115, 0.20);
+  part(decor, fadedGreen, 1.173, 1.179, 1.44, 0.009, 0.041, 0.19);
+
+  // The counter top is part of the imported model.
+  const inventory = new THREE.Group();
+  inventory.position.set(-1.12, 0.61, -1.83);
+  inventory.rotation.y = -0.12;
+  decor.add(inventory);
+  part(inventory, dark, 0, 0.008, 0, 0.20, 0.013, 0.25);
+  part(inventory, palePaper, 0, 0.017, 0, 0.17, 0.006, 0.22);
+  for (const z of [-0.067, -0.032, 0.003, 0.038, 0.073]) {
+    part(inventory, fadedGreen, 0, 0.021, z, 0.13, 0.001, 0.004);
+  }
+  part(decor, oldCardboard, -1.05, 0.638, -1.16, 0.12, 0.055, 0.18).rotation.y = 0.25;
+  part(decor, label, -1.05, 0.667, -1.16, 0.07, 0.005, 0.11).rotation.y = 0.25;
+
+  // Decorations are visual even when rays traverse the collidable room.
+  decor.traverse(object => {
+    if (object instanceof THREE.Mesh) object.raycast = () => {};
+  });
+  room.add(decor);
+}
+
+export function mountPharmacyInterior(marker: THREE.Group, model: THREE.Group): THREE.Group {
+  const room = new THREE.Group();
+  room.name = 'pharmacy-interior';
+  model.position.set(-1.82, -0.02, -0.5);
+  model.scale.setScalar(0.6);
   const materials = new Set<THREE.MeshStandardMaterial>();
-  facade.traverse(object => {
+  model.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return;
-    const surfaceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-    for (const material of surfaceMaterials) {
+    object.name = 'pharmacy-' + object.name;
+    const surfaces = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of surfaces) {
       if (material instanceof THREE.MeshStandardMaterial) materials.add(material);
     }
   });
   for (const material of materials) {
-    material.color.multiplyScalar(0.8);
-    material.roughness = Math.max(material.roughness, 0.96);
+    material.color.multiplyScalar(0.85);
+    material.roughness = Math.max(material.roughness, 0.86);
     material.emissiveIntensity = 0;
-    material.transparent = false;
-    material.alphaTest = 0.3;
-    material.depthWrite = true;
+    if (material.transparent) {
+      material.transparent = false;
+      material.alphaTest = 0.32;
+      material.depthWrite = true;
+    }
   }
+  room.add(model);
 
-  const front = facade.position.z + bounds.max.z * facade.scale.z;
-  const boardMap = [...materials].find(material => material.map)?.map?.clone();
-  if (boardMap) {
-    boardMap.repeat.set(0.32, 0.095);
-    boardMap.offset.set(0.39, 0.483);
-    boardMap.needsUpdate = true;
-  }
-  const boards = new THREE.MeshStandardMaterial({
-    color: 0x96826e, map: boardMap ?? null, roughness: 0.96,
-  });
-  const boarded = new THREE.Group();
-  boarded.name = 'pharmacy-window-boards';
-  for (const [x, y, width, angle] of [
-    [-0.89, 1.48, 1.46, -0.20],
-    [-0.87, 1.17, 1.38, 0.11],
-    [0.92, 1.61, 1.18, 0.19],
-    [0.91, 1.26, 1.12, -0.15],
-  ]) part(boarded, boards, x, y, front + 0.025, width, 0.13, 0.048).rotation.z = angle;
-  marker.add(boarded);
-
-  const sign = marker.getObjectByName('pharmacy-sign')!;
-  sign.position.set(0, 2.78, front + 0.015);
-  const light = marker.getObjectByName('zone-light-pharmacy')!;
-  light.position.set(0, 2.06, front + 0.55);
+  const wallTexture = [...materials].find(material => material.name === 'Material.001')?.map;
+  const masonry = new THREE.MeshStandardMaterial({ color: 0x777a71, map: wallTexture ?? null, roughness: 0.94 });
+  part(room, masonry, 1.43, 1.41, -0.5, 0.19, 2.82, 5.25);
+  decoratePharmacy(room);
+  part(marker, masonry, 0, 2.56, -0.24, 1.22, 0.50, 0.53);
   marker.getObjectByName('pharmacy-door')?.removeFromParent();
-  marker.add(facade);
-  return facade;
+  const sign = marker.getObjectByName('pharmacy-sign')!;
+  sign.position.set(0, 2.64, 0.10);
+  const entrance = marker.getObjectByName('zone-light-pharmacy') as THREE.PointLight;
+  entrance.position.set(0, 2.13, 0.33);
+  entrance.intensity = 11;
+  entrance.distance = 6;
+
+  const interior = new THREE.SpotLight(0x80cfb1, 9, 5, Math.PI / 3, 0.8, 1.6);
+  interior.name = 'pharmacy-interior-light';
+  interior.position.set(-0.7, 2.48, 0.15);
+  interior.target.position.set(0.55, 0.36, -0.18);
+  room.add(interior, interior.target);
+  part(room, green, -0.7, 2.49, 0.15, 0.42, 0.045, 0.10);
+  return room;
 }
 
 export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {

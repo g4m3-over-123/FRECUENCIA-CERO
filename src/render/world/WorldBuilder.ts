@@ -4,7 +4,7 @@ import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
 import { CollisionMask } from './collisionMask.ts';
-import { landmark, mountPharmacyStorefront, streetLamps } from './props.ts';
+import { landmark, mountPharmacyInterior, streetLamps } from './props.ts';
 
 /** street.glb ground mesh: its road sits up to 0.85 m below the sidewalks. */
 const GROUND_MESH = /^Plane\.?002(?:_|$)/i;
@@ -48,8 +48,8 @@ export class WorldBuilder {
     } else {
       this.buildBlocks(map);
     }
-    const storefront = map.id === 'map_street' ? await this.loadPharmacyStorefront() : undefined;
-    this.addStreetFixtures(map, storefront);
+    const pharmacy = map.id === 'map_street' ? await this.loadPharmacyInterior() : undefined;
+    this.addStreetFixtures(map, pharmacy);
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
@@ -135,21 +135,24 @@ export class WorldBuilder {
     }
   }
 
-  private async loadPharmacyStorefront(): Promise<THREE.Group | undefined> {
+  private async loadPharmacyInterior(): Promise<THREE.Group | undefined> {
     try {
-      const url = import.meta.env.BASE_URL + 'assets/props/pharmacy_storefront.glb';
+      const url = import.meta.env.BASE_URL + 'assets/props/pharmacy_interior.glb';
       return (await new GLTFLoader().loadAsync(url)).scene;
     } catch (error) {
-      console.warn('[WorldBuilder] Could not load the pharmacy storefront.', error);
+      console.warn('[WorldBuilder] Could not load the pharmacy interior.', error);
       return undefined;
     }
   }
 
-  private addStreetFixtures(map: MapDefinition, storefront?: THREE.Group): void {
+  private addStreetFixtures(map: MapDefinition, pharmacy?: THREE.Group): void {
     const walkable = createWalkableLookup(map);
     const edges: Edge[] = [];
+    const clinic = pharmacy ? map.cells.find(cell => cell.type === 'pharmacy') : undefined;
     for (const cell of map.cells) {
       if (!cell.walkable) continue;
+      if (clinic && cell.row >= clinic.row - 5 && cell.row <= clinic.row + 1 &&
+        cell.col >= clinic.col - 2 && cell.col <= clinic.col + 3) continue;
       const side = sides.find(d => !walkable({ row: cell.row + d.row, col: cell.col + d.col }));
       if (side) edges.push({ cell, side });
     }
@@ -169,7 +172,23 @@ export class WorldBuilder {
       if (!cell) continue;
       const edge = edges.reduce((best, e) => distanceSq(e.cell, cell) < distanceSq(best.cell, cell) ? e : best);
       const model = landmark(kind);
-      place(model, edge, 0.09);
+      if (kind === 'pharmacy' && pharmacy) {
+        const entranceCell = { row: cell.row - 6, col: cell.col };
+        const entrance = gridToWorld(entranceCell, map);
+        model.position.set(entrance.x, 0, entrance.z + 0.58);
+        model.rotation.y = Math.PI;
+        const room = mountPharmacyInterior(model, pharmacy);
+        const roomCenter = gridToWorld(cell, map);
+        room.position.set(roomCenter.x, 0, roomCenter.z);
+        room.rotation.y = -Math.PI / 2;
+        this.root.add(room);
+        this.collidables.push(room);
+        reserved.push(entranceCell);
+      } else {
+        place(model, edge, 0.09);
+        this.blockProp(model);
+        reserved.push(edge.cell);
+      }
       this.root.add(model);
       this.collidables.push(model);
       if (kind === 'extraction') {
@@ -178,12 +197,9 @@ export class WorldBuilder {
         this.root.add(ring);
         ring.position.set(center.x, 0.045, center.z);
       }
-      const solid = kind === 'pharmacy' && storefront ? mountPharmacyStorefront(model, storefront) : model;
-      this.blockProp(solid);
       model.traverse(obj => {
         if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
       });
-      reserved.push(edge.cell);
     }
 
     // Put each lamp in the widest remaining gap between light pools.
