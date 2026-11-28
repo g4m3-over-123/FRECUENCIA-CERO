@@ -4,7 +4,7 @@ import type { GridCoord, MapDefinition } from '../../core/contracts.ts';
 import { createWalkableLookup, getGridExtent, gridToWorld } from '../../core/world/gridSpace.ts';
 
 import { CollisionMask } from './collisionMask.ts';
-import { landmark, streetLamps } from './props.ts';
+import { landmark, mountPharmacyStorefront, streetLamps } from './props.ts';
 
 /** street.glb ground mesh: its road sits up to 0.85 m below the sidewalks. */
 const GROUND_MESH = /^Plane\.?002(?:_|$)/i;
@@ -48,7 +48,8 @@ export class WorldBuilder {
     } else {
       this.buildBlocks(map);
     }
-    this.addStreetFixtures(map);
+    const storefront = map.id === 'map_street' ? await this.loadPharmacyStorefront() : undefined;
+    this.addStreetFixtures(map, storefront);
     this.gridOverlay = this.createGridOverlay(map);
     this.gridOverlay.visible = false;
     this.root.add(this.gridOverlay);
@@ -134,7 +135,17 @@ export class WorldBuilder {
     }
   }
 
-  private addStreetFixtures(map: MapDefinition): void {
+  private async loadPharmacyStorefront(): Promise<THREE.Group | undefined> {
+    try {
+      const url = import.meta.env.BASE_URL + 'assets/props/pharmacy_storefront.glb';
+      return (await new GLTFLoader().loadAsync(url)).scene;
+    } catch (error) {
+      console.warn('[WorldBuilder] Could not load the pharmacy storefront.', error);
+      return undefined;
+    }
+  }
+
+  private addStreetFixtures(map: MapDefinition, storefront?: THREE.Group): void {
     const walkable = createWalkableLookup(map);
     const edges: Edge[] = [];
     for (const cell of map.cells) {
@@ -167,10 +178,11 @@ export class WorldBuilder {
         this.root.add(ring);
         ring.position.set(center.x, 0.045, center.z);
       }
+      const solid = kind === 'pharmacy' && storefront ? mountPharmacyStorefront(model, storefront) : model;
+      this.blockProp(solid);
       model.traverse(obj => {
         if (obj.name !== 'extraction-lens' && obj.name !== 'radio-indicator') freezeTransform(obj);
       });
-      this.blockProp(model);
       reserved.push(edge.cell);
     }
 
@@ -201,7 +213,7 @@ export class WorldBuilder {
   /** Stamps the body-height parts of a runtime prop into the player collision mask. */
   private blockProp(model: THREE.Object3D): void {
     if (!this.collision) return;
-    model.updateMatrixWorld(true);
+    model.updateWorldMatrix(true, true);
     const box = new THREE.Box3();
     model.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;

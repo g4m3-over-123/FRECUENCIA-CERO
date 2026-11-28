@@ -99,6 +99,65 @@ export function streetLamps(mounts: THREE.Matrix4[]) {
   return group;
 }
 
+export function mountPharmacyStorefront(marker: THREE.Group, store: THREE.Group): THREE.Group {
+  const facade = new THREE.Group();
+  facade.name = 'pharmacy-storefront';
+  store.rotation.y = Math.PI / 2;
+  facade.add(store);
+
+  const bounds = new THREE.Box3().setFromObject(facade);
+  const center = bounds.getCenter(new THREE.Vector3());
+  const size = bounds.getSize(new THREE.Vector3());
+  facade.scale.set(3.8 / size.x, 3.18 / size.y, 0.48);
+  facade.position.set(-center.x * facade.scale.x, 0.02 - bounds.min.y * facade.scale.y,
+    -0.24 - bounds.min.z * facade.scale.z);
+
+  const materials = new Set<THREE.MeshStandardMaterial>();
+  facade.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const surfaceMaterials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of surfaceMaterials) {
+      if (material instanceof THREE.MeshStandardMaterial) materials.add(material);
+    }
+  });
+  for (const material of materials) {
+    material.color.multiplyScalar(0.8);
+    material.roughness = Math.max(material.roughness, 0.96);
+    material.emissiveIntensity = 0;
+    material.transparent = false;
+    material.alphaTest = 0.3;
+    material.depthWrite = true;
+  }
+
+  const front = facade.position.z + bounds.max.z * facade.scale.z;
+  const boardMap = [...materials].find(material => material.map)?.map?.clone();
+  if (boardMap) {
+    boardMap.repeat.set(0.32, 0.095);
+    boardMap.offset.set(0.39, 0.483);
+    boardMap.needsUpdate = true;
+  }
+  const boards = new THREE.MeshStandardMaterial({
+    color: 0x96826e, map: boardMap ?? null, roughness: 0.96,
+  });
+  const boarded = new THREE.Group();
+  boarded.name = 'pharmacy-window-boards';
+  for (const [x, y, width, angle] of [
+    [-0.89, 1.48, 1.46, -0.20],
+    [-0.87, 1.17, 1.38, 0.11],
+    [0.92, 1.61, 1.18, 0.19],
+    [0.91, 1.26, 1.12, -0.15],
+  ]) part(boarded, boards, x, y, front + 0.025, width, 0.13, 0.048).rotation.z = angle;
+  marker.add(boarded);
+
+  const sign = marker.getObjectByName('pharmacy-sign')!;
+  sign.position.set(0, 2.78, front + 0.015);
+  const light = marker.getObjectByName('zone-light-pharmacy')!;
+  light.position.set(0, 2.06, front + 0.55);
+  marker.getObjectByName('pharmacy-door')?.removeFromParent();
+  marker.add(facade);
+  return facade;
+}
+
 export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
   const group = new THREE.Group();
   group.name = kind;
@@ -108,11 +167,17 @@ export function landmark(kind: 'pharmacy' | 'refuge' | 'extraction') {
   group.add(light);
   if (kind === 'pharmacy') {
     light.color.setHex(0x63ffbc);
-    part(group, steel, 0, 1.14, 0, 1.0, 2.28, 0.11);
-    for (const y of [0.24, 0.81, 1.38, 1.95]) part(group, dark, 0, y, 0.065, 0.98, 0.045, 0.035);
-    part(group, dark, 0, 2.53, 0.02, 0.7, 0.7, 0.16);
-    part(group, green, 0, 2.53, 0.12, 0.53, 0.16, 0.06);
-    part(group, green, 0, 2.53, 0.12, 0.16, 0.53, 0.055);
+    const door = new THREE.Group();
+    door.name = 'pharmacy-door';
+    part(door, steel, 0, 1.14, 0, 1.0, 2.28, 0.11);
+    for (const y of [0.24, 0.81, 1.38, 1.95]) part(door, dark, 0, y, 0.065, 0.98, 0.045, 0.035);
+    const sign = new THREE.Group();
+    sign.name = 'pharmacy-sign';
+    sign.position.y = 2.53;
+    part(sign, dark, 0, 0, 0.02, 0.7, 0.7, 0.16);
+    part(sign, green, 0, 0, 0.12, 0.53, 0.16, 0.06);
+    part(sign, green, 0, 0, 0.12, 0.16, 0.53, 0.055);
+    group.add(door, sign);
   } else if (kind === 'refuge') {
     part(group, dark, 0, 0.52, 0, 0.91, 1.04, 0.28);
     part(group, steel, 0, 0.96, 0.12, 0.85, 0.26, 0.13);
