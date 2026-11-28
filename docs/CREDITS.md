@@ -54,3 +54,8 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 - La barrera, la caja, el bote y el generador usan el glTF de Poly Haven con texturas 1K, empaquetado en GLB. Los escombros usan el LOD1 de Tevy con geometría sin compresión Meshopt y texturas PNG.
 - La valla, la persiana y la lámpara usan texturas de 1K de Poly Haven empaquetadas en GLB. La ambulancia y la barricada usan el LOD1 de Tevy con geometría sin compresión Meshopt y texturas PNG.
 - Los nueve WAV de disparo, recarga y cambio de arma se recortaron por evento individual (eliminando pausas entre rafagas de los clips originales) y se normalizaron entre -1.6 dBFS y -1.0 dBFS en PCM mono de 16 bits para Web Audio espacial.
+
+## Cortes cinematicos
+
+- Los cuatro cortes del guion (Inicio, Radio activada, Victoria y Derrota) y la transicion Acto I -> Acto II son tarjetas de texto en HTML/CSS (`MonitorPanel.playCinematic`). No usan assets externos; los textos son propios del equipo y se basan en `02_Cinematica_Prompts_y_Voces_Kokoro.md`.
+- Si se agrega un clip, va en `public/assets/cinematics/` con estos nombres: `intro.mp4` (Acto I), `act2.mp4` (Acto II), `victory.mp4` y `defeat.mp4`. Cada clip debe pesar menos de 10 MB (H.264) y anotarse en la tabla de arriba con su origen y licencia. Si el archivo no existe, se muestra la tarjeta de texto.
