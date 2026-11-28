@@ -1,19 +1,23 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { AgentBrain, createAgentRuntime } from '../src/core/agents/AgentBrain.ts';
 import { triggerHordeSpread } from '../src/core/agents/hordeSpread.ts';
 import {
+  buildLocalPerception,
   buildOpaqueCellSet,
   gridDistance,
   hasLineOfSight,
 } from '../src/core/agents/perception.ts';
 import { runDijkstra } from '../src/core/algorithms/dijkstra.ts';
-import type { AgentRole, GridCoord, MaraPosture, SceneId } from '../src/core/contracts.ts';
+import type { AgentRole, CellType, GridCoord, MapDefinition, MaraPosture, SceneId } from '../src/core/contracts.ts';
 import {
   SimulationEngine,
   type ExtendedWorldSnapshot,
 } from '../src/core/gameplay/SimulationEngine.ts';
 import type { AgentSpawnConfig } from '../src/core/gameplay/scenes.ts';
+import { WeightedGraph } from '../src/core/graph/WeightedGraph.ts';
 import { parseMapDefinition } from '../src/core/graph/mapLoader.ts';
+import { SeededRng } from '../src/core/graph/seededRng.ts';
 
 const street = parseMapDefinition(JSON.parse(
   readFileSync(new URL('../public/maps/map_street.json', import.meta.url), 'utf8')
@@ -323,5 +327,327 @@ describe('Street agent acceptance', () => {
     expect(replanned.lastSearch?.totalCost).toBeCloseTo(alternate.totalCost);
     expect(replanned.position).toEqual(replanned.lastSearch?.path[1]);
     expect(replanned.currentPath.at(-1)).toEqual(target);
+  });
+});
+
+function fineAsciiMap(rows: string[]): MapDefinition {
+  const cells: MapDefinition['cells'] = [];
+  let spawnMara: GridCoord = { row: 0, col: 0 };
+  let extractionPoint: GridCoord = { row: rows.length - 1, col: rows[0].length - 1 };
+  rows.forEach((line, row) => {
+    [...line].forEach((ch, col) => {
+      let type: CellType = 'street';
+      let walkable = true;
+      let cost = 1;
+      if (ch === '#') {
+        type = 'building';
+        walkable = false;
+        cost = 999;
+      } else if (ch === 'R') {
+        type = 'refuge';
+      } else if (ch === 'P') {
+        type = 'pharmacy';
+      } else if (ch === 'E') {
+        type = 'extraction';
+        extractionPoint = { row, col };
+      } else if (ch === 'S') {
+        spawnMara = { row, col };
+      }
+      cells.push({ row, col, type, walkable, cost });
+    });
+  });
+  return {
+    id: 'scream_test_map',
+    name: 'scream_test_map',
+    width: rows[0].length,
+    height: rows.length,
+    cellSize: 1,
+    spawnMara,
+    extractionPoint,
+    cells,
+  };
+}
+
+describe('Explorer scream behavior', () => {
+  it('holds in alert, emits zombie_scream at its own cell, waits stationary, then transitions to pursue', () => {
+    const startPos = cell(10, 13);
+    const engine = new SimulationEngine(street, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('screamer', startPos, 'explorer')],
+    });
+
+    const t1 = engine.step(tickMs);
+    expect(t1.agents[0]).toMatchObject({
+      state: 'alert',
+      position: startPos,
+      goalReason: 'screaming to alert nearby infected',
+    });
+    expect(t1.soundEvents.some((s) => s.sourceId === 'zombie_scream')).toBe(false);
+
+    const t2 = engine.step(tickMs);
+    expect(t2.soundEvents).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'zombie_scream',
+        position: startPos,
+        radius: 16,
+        intensity: 0.85,
+      })
+    );
+    expect(t2.agents[0]).toMatchObject({ state: 'alert', position: startPos });
+
+    const t3 = engine.step(tickMs);
+    expect(t3.agents[0]).toMatchObject({ state: 'alert', position: startPos });
+
+    const t4 = engine.step(tickMs);
+    expect(t4.agents[0].state).toBe('pursue');
+    expect(t4.agents[0].position).not.toEqual(startPos);
+
+    // Pursuers do not scream; they pursue and advance immediately.
+    const pursuerEngine = new SimulationEngine(street, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('rusher', startPos, 'pursuer')],
+    });
+    const p1 = pursuerEngine.step(tickMs);
+    expect(p1.agents[0].state).toBe('pursue');
+    expect(p1.agents[0].position).not.toEqual(startPos);
+    expect(pursuerEngine.step(tickMs).soundEvents.some((s) => s.sourceId === 'zombie_scream')).toBe(false);
+  });
+
+  it('attracts an out-of-LOS zombie locally when coordination is off while preserving alert priority when on', () => {
+    const walled = fineAsciiMap([
+      'R..........P',
+      '.S..........',
+      '####........',
+      '............',
+      '............',
+      '...........E',
+    ]);
+    const screamPos = cell(1, 4);
+    const listenerStart = cell(5, 1);
+
+    const isolated = new SimulationEngine(walled, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [
+        spawn('screamer', screamPos, 'explorer'),
+        spawn('listener', listenerStart, 'explorer'),
+      ],
+    });
+    expect(
+      hasLineOfSight(isolated.getGraph(), listenerStart, walled.spawnMara, 9, buildOpaqueCellSet(walled))
+    ).toBe(false);
+
+    const iso1 = isolated.step(tickMs);
+    expect(iso1.activeAlerts.flatMap((a) => a.hops)).toHaveLength(0);
+    expect(iso1.agents[1]).toMatchObject({ state: 'patrol', memory: null });
+
+    const iso2 = isolated.step(tickMs);
+    expect(iso2.soundEvents).toContainEqual(
+      expect.objectContaining({
+        sourceId: 'zombie_scream',
+        position: screamPos,
+        radius: 16,
+        intensity: 0.85,
+      })
+    );
+    expect(iso2.agents[1].state).toBe('investigate');
+    expect(iso2.agents[1].memory).toMatchObject({
+      source: 'sound',
+      position: screamPos,
+    });
+    expect(iso2.agents[1].memory?.position).not.toEqual(walled.spawnMara);
+    expect(gridDistance(iso2.agents[1].position, screamPos)).toBeLessThan(
+      gridDistance(iso1.agents[1].position, screamPos)
+    );
+
+    // With coordination enabled, a nearby pursuer within alertRadius prioritizes receivedAlert over zombie_scream.
+    const coordinated = new SimulationEngine(walled, 1, {
+      seed,
+      coordinationEnabled: true,
+      customAgents: [
+        spawn('screamer', screamPos, 'explorer'),
+        spawn('listener', listenerStart, 'pursuer'),
+      ],
+    });
+    const coord1 = coordinated.step(tickMs);
+    expect(coord1.activeAlerts[0]?.hops).toContainEqual(
+      expect.objectContaining({ fromAgentId: 'screamer', toAgentId: 'listener', depth: 1 })
+    );
+    const coord2 = coordinated.step(tickMs);
+    expect(coord2.agents[1].memory).toMatchObject({
+      source: 'alert',
+      position: walled.spawnMara,
+    });
+  });
+
+  it('interrupts scream hold on stun or death and enforces cooldown against scream loops', () => {
+    const startPos = cell(10, 13);
+
+    // Stun interrupts the remaining scream hold ticks immediately.
+    const stunEngine = new SimulationEngine(street, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('exp', startPos, 'explorer')],
+    });
+    expect(stunEngine.step(tickMs).agents[0].state).toBe('alert');
+    expect(stunEngine.fire('exp')).toMatchObject({ fired: true, hitAgentId: 'exp', killed: false });
+    expect(stunEngine.step(tickMs).agents[0]).toMatchObject({ state: 'stunned', position: startPos });
+
+    const resumed = stunEngine.step(tickMs);
+    expect(resumed.agents[0].state).toBe('pursue');
+    expect(resumed.agents[0].position).not.toEqual(startPos);
+    expect(stunEngine.step(tickMs).soundEvents.some((s) => s.sourceId === 'zombie_scream')).toBe(false);
+
+    // Death stops any further scream hold or emission permanently.
+    const deathEngine = new SimulationEngine(street, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('exp', startPos, 'explorer')],
+    });
+    expect(deathEngine.step(tickMs).agents[0].state).toBe('alert');
+    expect(deathEngine.applyHit('exp', 100)).toBe(true);
+    expect(deathEngine.step(tickMs).agents[0]).toMatchObject({ state: 'dead', position: startPos });
+    const afterDeath = deathEngine.step(tickMs);
+    expect(afterDeath.agents[0]).toMatchObject({ state: 'dead', position: startPos });
+    expect(afterDeath.soundEvents.some((s) => s.sourceId === 'zombie_scream')).toBe(false);
+
+    // 18-tick cooldown prevents repeated screaming while maintaining continuous line of sight.
+    const corridor = fineAsciiMap([
+      'R............................P',
+      '.S............................',
+      '.............................E',
+    ]);
+    const graph = new WeightedGraph(corridor);
+    const brain = new AgentBrain();
+    const rng = new SeededRng(seed);
+    const runtime = createAgentRuntime('exp-cd', 'explorer', cell(1, 1), [cell(1, 1)], 'astar', 'octile');
+
+    const screamTicks: number[] = [];
+    const statesByTick: Record<number, string> = {};
+    for (let tick = 1; tick <= 19; tick++) {
+      const target = cell(1, runtime.position.col + 5);
+      const perception = buildLocalPerception(runtime.position, target, []);
+      const cycle = brain.executeCycle({
+        runtime,
+        perception,
+        graph,
+        algorithm: 'astar',
+        heuristic: 'octile',
+        tick,
+        rng,
+      });
+      statesByTick[tick] = cycle.snapshot.state;
+      if (cycle.emittedSound?.sourceId === 'zombie_scream') {
+        screamTicks.push(tick);
+      }
+    }
+
+    expect(screamTicks).toEqual([1, 19]);
+    expect([statesByTick[1], statesByTick[2], statesByTick[3]]).toEqual(['alert', 'alert', 'alert']);
+    for (let tick = 4; tick <= 18; tick++) {
+      expect(statesByTick[tick]).toBe('pursue');
+    }
+    expect(statesByTick[19]).toBe('alert');
+  });
+
+  it('lets a co-located zombie hear another explorer scream and cancels alert hold upon melee contact', () => {
+    const sharedCell = cell(1, 4);
+    const walled = fineAsciiMap([
+      'R..........P',
+      '.S..........',
+      '####........',
+      '............',
+      '............',
+      '...........E',
+    ]);
+    const colocateGraph = new WeightedGraph(walled);
+    const colocateBrain = new AgentBrain();
+    const colocateRng = new SeededRng(seed);
+    const screamer = createAgentRuntime('screamer', 'explorer', sharedCell, [sharedCell], 'astar', 'octile');
+    const teammate = createAgentRuntime('teammate', 'explorer', sharedCell, [sharedCell], 'astar', 'octile');
+    const sharedScream = {
+      id: 'sound-zombie_scream-screamer-2',
+      sourceId: 'zombie_scream',
+      position: sharedCell,
+      radius: 16,
+      intensity: 0.85,
+      timestamp: 2,
+    };
+    const screamerCycle = colocateBrain.executeCycle({
+      runtime: screamer,
+      perception: buildLocalPerception(sharedCell, null, [sharedScream]),
+      graph: colocateGraph,
+      algorithm: 'astar',
+      heuristic: 'octile',
+      tick: 2,
+      rng: colocateRng,
+    });
+    expect(screamer.memoryStore.getHistory()).toHaveLength(0);
+    expect(screamerCycle.snapshot.state).toBe('patrol');
+    const teammateCycle = colocateBrain.executeCycle({
+      runtime: teammate,
+      perception: buildLocalPerception(sharedCell, null, [sharedScream]),
+      graph: colocateGraph,
+      algorithm: 'astar',
+      heuristic: 'octile',
+      tick: 2,
+      rng: colocateRng,
+    });
+    expect(teammate.memoryStore.getHistory()).toContainEqual(
+      expect.objectContaining({ source: 'sound', position: sharedCell })
+    );
+    expect(teammateCycle.snapshot.goalReason).toBe('target site cleared; resuming local patrol');
+
+    // Overlapping hyphenated emitter IDs must not match listener prefix ("screamer" vs "screamer-rear").
+    const rearPos = cell(1, 7);
+    const rearScream = {
+      id: 'sound-zombie_scream-screamer-rear-2',
+      sourceId: 'zombie_scream',
+      position: rearPos,
+      radius: 16,
+      intensity: 0.85,
+      timestamp: 2,
+    };
+    const weakerCue = {
+      id: 'sound-step-2',
+      sourceId: 'step',
+      position: cell(1, 0),
+      radius: 6,
+      intensity: 0.3,
+      timestamp: 2,
+    };
+    const overlapListener = createAgentRuntime('screamer', 'explorer', sharedCell, [sharedCell], 'astar', 'octile');
+    const overlapCycle = colocateBrain.executeCycle({
+      runtime: overlapListener,
+      perception: buildLocalPerception(sharedCell, null, [rearScream, weakerCue]),
+      graph: colocateGraph,
+      algorithm: 'astar',
+      heuristic: 'octile',
+      tick: 2,
+      rng: colocateRng,
+    });
+    expect(overlapCycle.snapshot.memory).toMatchObject({ source: 'sound', position: rearPos });
+
+    // Entering melee contact during an active scream hold cancels the hold and keeps combat state coherent.
+    const startPos = cell(10, 13);
+    const meleeEngine = new SimulationEngine(street, 1, {
+      seed,
+      coordinationEnabled: false,
+      customAgents: [spawn('exp', startPos, 'explorer')],
+    });
+    const m1 = meleeEngine.step(tickMs);
+    expect(m1.agents[0]).toMatchObject({
+      state: 'alert',
+      goalReason: 'screaming to alert nearby infected',
+    });
+
+    const m2 = move(meleeEngine, startPos, 'stealth');
+    expect(m2.agents[0].state).toBe('attack');
+    expect(m2.agents[0].goalReason).not.toBe('screaming to alert nearby infected');
+
+    const m3 = move(meleeEngine, cell(10, 11), 'stealth');
+    expect(m3.agents[0].state).toBe('pursue');
   });
 });
