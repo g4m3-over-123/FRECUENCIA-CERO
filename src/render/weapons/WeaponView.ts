@@ -235,7 +235,6 @@ export class WeaponView {
 
     this.flashLight.name = 'weapon-flash-light';
     this.flashLight.castShadow = false;
-    this.flashLight.visible = false;
     this.flashTarget.name = 'weapon-flash-target';
     this.flashTarget.position.set(0, -.04, -12);
     this.flashLight.target = this.flashTarget;
@@ -253,6 +252,10 @@ export class WeaponView {
     this.ensureRigLoaded(DEFAULT_WEAPON);
   }
 
+  effectsForWarmup(): THREE.Object3D {
+    return this.muzzleFlash.clone();
+  }
+
   setWeapon(id: WeaponId): void {
     if (this.activeId === id) return;
     this.activeId = id;
@@ -264,7 +267,6 @@ export class WeaponView {
     this.activeBarrelIndex = 0;
     this.muzzleFlash.visible = false;
     this.flashMaterial.opacity = 0;
-    this.flashLight.visible = false;
     this.flashLight.intensity = 0;
     this.equipDip = 1;
     this.fireToggle = 0;
@@ -316,12 +318,10 @@ export class WeaponView {
       this.muzzleFlash.visible = true;
       this.muzzleFlash.scale.setScalar(config.flashScale * this.flashJitter * (.72 + .35 * t));
       this.flashMaterial.opacity = config.flashOpacity * (t ** 1.3);
-      this.flashLight.visible = true;
       this.flashLight.intensity = config.flashLightPower * (t ** 1.6);
     } else {
       this.muzzleFlash.visible = false;
       this.flashMaterial.opacity = 0;
-      this.flashLight.visible = false;
       this.flashLight.intensity = 0;
     }
   }
@@ -341,7 +341,6 @@ export class WeaponView {
     this.muzzleFlash.visible = true;
     this.muzzleFlash.scale.setScalar(config.flashScale * this.flashJitter);
     this.flashMaterial.opacity = config.flashOpacity;
-    this.flashLight.visible = true;
     this.flashLight.intensity = config.flashLightPower;
 
     this.playSequence([[useAlt ? 'FireAlt' : 'Fire', config.fireDuration]]);

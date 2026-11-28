@@ -10,6 +10,7 @@ import { CityBuilder } from './CityBuilder.ts';
 
 const NIGHT_SKY_COLOR = 0x090f1c;
 const FPV_FOG_DENSITY = 0.037;
+const FLASHLIGHT_INTENSITY = 86;
 const FILL_SCALE = 0.165;
 const MOON_SCALE = 0.28;
 const FOG_SCALE = 2.5;
@@ -145,6 +146,7 @@ export class SceneManager {
   readonly flashlight: THREE.SpotLight;
 
   private readonly clock = new THREE.Clock();
+  private readonly effectWarmup = new THREE.Group();
   private readonly environment: THREE.WebGLRenderTarget;
   private readonly city: CityBuilder;
   private readonly rain = createRain();
@@ -219,10 +221,12 @@ export class SceneManager {
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
 
     // Camera-mounted tactical flashlight (OFF by default; toggle with F)
-    this.flashlight = new THREE.SpotLight(0xfff0d9, 86, 36, Math.PI / 6.5, 0.55, 1.6);
+    this.flashlight = new THREE.SpotLight(0xfff0d9, 0, 36, Math.PI / 6.5, 0.55, 1.6);
     this.flashlight.position.set(-0.23, 0.10, -0.09);
-    this.flashlight.visible = false;
+    // Keep the lighting configuration stable when toggling the beam.
     this.flashlight.castShadow = true;
+    this.flashlight.shadow.autoUpdate = false;
+    this.flashlight.shadow.needsUpdate = true;
     this.flashlight.shadow.mapSize.set(768, 768);
     this.flashlight.shadow.camera.near = 0.25;
     this.flashlight.shadow.camera.far = 36;
@@ -239,6 +243,7 @@ export class SceneManager {
     this.flashlightBeam = this.city.makeBeam(this.flashlight.position, endOfBeam, 3.05, 0xffe4ba, 0.035);
     this.flashlightBeam.visible = false;
     this.camera.add(this.flashlightBeam);
+    this.preloadEffects(this.flashlightBeam.clone());
 
     this.fill = new THREE.HemisphereLight(0x6894cb, 0x19263f, 0.18);
     this.fill.name = 'scene-hemisphere-light';
@@ -290,9 +295,10 @@ export class SceneManager {
 
     const world = this.scene.getObjectByName('world');
     if (world) this.city.apply(world);
-    this.clock.start();
     this.sharpenTextures();
     if (this.quality === 'low') this.dropPointLights();
+    this.warmupEffects();
+    this.clock.start();
 
     let moonShadowAge = 0;
     const animate = () => {
@@ -314,14 +320,58 @@ export class SceneManager {
       this.rain.time.value += dt;
       this.camera.getWorldPosition(this.rain.center.value);
       this.camera.getWorldDirection(this.rain.direction.value);
-      this.rain.flashlight.value = this.flashlight.visible ? 1 : 0;
-      this.flashlightBeam.visible = this.flashlight.visible;
+      this.rain.flashlight.value = this.isFlashlightEnabled() ? 1 : 0;
       this.city.update(dt);
       if (this.composer) this.composer.render(dt);
       else this.renderer.render(this.scene, this.camera);
     };
 
     animate();
+  }
+
+  preloadEffects(...objects: THREE.Object3D[]): void {
+    this.effectWarmup.add(...objects);
+  }
+
+  private warmupEffects(): void {
+    if (!this.effectWarmup.children.length) return;
+    const layer = 31;
+    const camera = this.camera.clone(false);
+    camera.position.set(0, 0.6, 3);
+    camera.lookAt(0, 0, 0);
+    camera.layers.set(layer);
+
+    const lightMasks = new Map<THREE.Light, number>();
+    this.scene.traverseVisible(object => {
+      if (!(object instanceof THREE.Light) || !object.layers.test(this.camera.layers)) return;
+      lightMasks.set(object, object.layers.mask);
+      object.layers.enable(layer);
+    });
+    this.effectWarmup.traverse(object => {
+      object.layers.set(layer);
+      object.visible = true;
+      object.frustumCulled = false;
+    });
+
+    // Draw once while loading so the driver prepares the effects as well as their shaders.
+    const target = this.renderer.getRenderTarget();
+    const viewport = this.renderer.getViewport(new THREE.Vector4());
+    const updateShadows = this.renderer.shadowMap.autoUpdate;
+    this.scene.add(this.effectWarmup);
+    try {
+      if (this.composer) this.renderer.setRenderTarget(this.composer.readBuffer);
+      this.renderer.setViewport(0, 0, 64, 64);
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.render(this.scene, camera);
+      this.renderer.getContext().finish();
+    } finally {
+      this.effectWarmup.removeFromParent();
+      this.effectWarmup.clear();
+      for (const [light, mask] of lightMasks) light.layers.mask = mask;
+      this.renderer.shadowMap.autoUpdate = updateShadows;
+      this.renderer.setRenderTarget(target);
+      this.renderer.setViewport(viewport);
+    }
   }
 
   private updateNightPreset(update: (dt: number) => void, dt: number): void {
@@ -385,17 +435,20 @@ export class SceneManager {
   }
 
   setFlashlightEnabled(enabled: boolean): void {
-    this.flashlight.visible = enabled;
+    this.flashlight.intensity = enabled ? FLASHLIGHT_INTENSITY : 0;
+    this.flashlight.shadow.autoUpdate = enabled;
+    if (enabled) this.flashlight.shadow.needsUpdate = true;
+    this.flashlightBeam.visible = enabled;
   }
 
   toggleFlashlight(): boolean {
-    this.flashlight.visible = !this.flashlight.visible;
-    console.info(`[SceneManager] Flashlight: ${this.flashlight.visible ? 'ON' : 'OFF'}`);
-    return this.flashlight.visible;
+    const enabled = !this.isFlashlightEnabled();
+    this.setFlashlightEnabled(enabled);
+    return enabled;
   }
 
   isFlashlightEnabled(): boolean {
-    return this.flashlight.visible;
+    return this.flashlight.intensity > 0;
   }
 
   setPreviewWalkEnabled(enabled: boolean): void {

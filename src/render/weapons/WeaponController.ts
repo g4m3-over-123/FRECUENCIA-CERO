@@ -57,6 +57,7 @@ export class WeaponController {
   ) {
     this.viewModel = new WeaponView(sceneManager.camera);
     this.effects = new CombatEffects(sceneManager.scene);
+    sceneManager.preloadEffects(this.viewModel.effectsForWarmup(), this.effects.effectsForWarmup());
     this.raycaster.far = MAX_RANGE;
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('keydown', this.onKeyDown);

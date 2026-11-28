@@ -147,6 +147,7 @@ export class AudioManager {
     if (this.binding) {
       this.binding.player?.releaseSpatialAudio();
       this.binding.player = this;
+      this.prepareSpatialAudio();
       window.addEventListener('keydown', this.unlockOnInput, true);
       window.addEventListener('pointerup', this.unlockOnInput, true);
     }
@@ -322,21 +323,28 @@ export class AudioManager {
     this.activeAlerts = activeAlerts;
   }
 
+  private prepareSpatialAudio(): THREE.AudioListener | undefined {
+    if (!this.binding) return undefined;
+    if (this.listener) return this.listener;
+    try {
+      const listener = new THREE.AudioListener();
+      this.binding.camera.add(listener);
+      this.listener = listener;
+      for (const cue of preloadCues) void this.loadBuffer(cue, listener.context);
+      return listener;
+    } catch {
+      return undefined;
+    }
+  }
+
   private unlock(): void {
     if (this.muted || (this.binding && this.binding.player !== this)) return;
     this.unlocked = true;
     if (!this.binding) return;
-    let listener = this.listener;
+    const listener = this.prepareSpatialAudio();
     if (!listener) {
-      try {
-        listener = new THREE.AudioListener();
-      } catch {
-        this.stopWaitingForInput();
-        return;
-      }
-      this.binding.camera.add(listener);
-      this.listener = listener;
-      for (const cue of preloadCues) void this.loadBuffer(cue, listener.context);
+      this.stopWaitingForInput();
+      return;
     }
     if (listener.context.state === 'running') {
       this.stopWaitingForInput();

@@ -88,6 +88,32 @@ export class CombatEffects {
   private readonly bloodMistTexture = createBloodMistTexture();
   private readonly bloodSplatTexture = createBloodSplatTexture();
   private readonly sparkTexture = createSparkTexture();
+  private readonly tracerMaterial = new THREE.MeshBasicMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    fog: false,
+    toneMapped: true,
+  });
+  private readonly mistMaterial = new THREE.SpriteMaterial({
+    color: 0x850c14,
+    map: this.bloodMistTexture,
+    transparent: true,
+    opacity: .68,
+    depthWrite: false,
+    fog: true,
+  });
+  private readonly splatMaterial = new THREE.MeshBasicMaterial({
+    color: 0x7a0910,
+    map: this.bloodSplatTexture,
+    transparent: true,
+    opacity: .9,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    fog: true,
+  });
 
   private readonly tracerGeo: THREE.CylinderGeometry;
   private readonly splatGeo: THREE.PlaneGeometry;
@@ -147,6 +173,19 @@ export class CombatEffects {
     });
 
     this.groundRaycaster.far = 6;
+  }
+
+  effectsForWarmup(): THREE.Object3D {
+    const group = new THREE.Group();
+    group.add(
+      new THREE.Mesh(this.tracerGeo, this.tracerMaterial),
+      new THREE.Mesh(this.splatGeo, this.splatMaterial),
+      new THREE.Sprite(this.bloodBrightMat),
+      new THREE.Sprite(this.bloodDarkMat),
+      new THREE.Sprite(this.mistMaterial),
+      new THREE.Sprite(this.sparkMat),
+    );
+    return group;
   }
 
   spawnShot(params: ShotEffectParams): void {
@@ -339,6 +378,9 @@ export class CombatEffects {
     this.bloodBrightMat.dispose();
     this.bloodDarkMat.dispose();
     this.sparkMat.dispose();
+    this.tracerMaterial.dispose();
+    this.mistMaterial.dispose();
+    this.splatMaterial.dispose();
     this.bloodDropTexture.dispose();
     this.bloodMistTexture.dispose();
     this.bloodSplatTexture.dispose();
@@ -363,15 +405,9 @@ export class CombatEffects {
     }
 
     const dir = end.clone().sub(start).divideScalar(totalDist);
-    const material = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: baseOpacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      fog: false,
-      toneMapped: true,
-    });
+    const material = this.tracerMaterial.clone();
+    material.color.setHex(color);
+    material.opacity = baseOpacity;
     const mesh = new THREE.Mesh(this.tracerGeo, material);
     mesh.name = 'shot-tracer';
     mesh.frustumCulled = false;
@@ -444,14 +480,7 @@ export class CombatEffects {
         oldest.sprite.removeFromParent();
         oldest.material.dispose();
       }
-      const material = new THREE.SpriteMaterial({
-        color: 0x850c14,
-        map: this.bloodMistTexture,
-        transparent: true,
-        opacity: .68,
-        depthWrite: false,
-        fog: true,
-      });
+      const material = this.mistMaterial.clone();
       const sprite = new THREE.Sprite(material);
       sprite.name = 'blood-mist';
       sprite.position.copy(hitPoint).add(new THREE.Vector3(
@@ -499,17 +528,7 @@ export class CombatEffects {
       const targetScale = .4 + Math.random() * .55;
       const splatGroundY = this.resolveSplatGroundY(splatX, splatZ, hitPoint.y, targetScale, worldTargets);
 
-      const material = new THREE.MeshBasicMaterial({
-        color: 0x7a0910,
-        map: this.bloodSplatTexture,
-        transparent: true,
-        opacity: .9,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
-        polygonOffsetUnits: -2,
-        fog: true,
-      });
+      const material = this.splatMaterial.clone();
       const mesh = new THREE.Mesh(this.splatGeo, material);
       mesh.name = 'blood-ground-splat';
       mesh.position.set(splatX, splatGroundY + SPLAT_LIFT, splatZ);

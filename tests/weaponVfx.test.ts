@@ -147,7 +147,7 @@ describe('WeaponView muzzle flash and barrel anchors', () => {
     expect(flashGroup).not.toBeNull();
     expect(muzzle).not.toBeNull();
     expect(flashGroup.visible).toBe(false);
-    expect(spot.visible).toBe(false);
+    expect(spot.visible).toBe(true);
     expect(spot.intensity).toBe(0);
 
     view.fire();
@@ -158,7 +158,7 @@ describe('WeaponView muzzle flash and barrel anchors', () => {
 
     view.update(0.2);
     expect(flashGroup.visible).toBe(false);
-    expect(spot.visible).toBe(false);
+    expect(spot.visible).toBe(true);
     expect(spot.intensity).toBe(0);
 
     view.dispose();
