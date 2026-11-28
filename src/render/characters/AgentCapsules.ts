@@ -3,7 +3,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { AgentRole, AgentState, MapDefinition } from '../../core/contracts.ts';
 import type { ExtendedAgentSnapshot } from '../../core/agents/AgentBrain.ts';
-import { gridToWorld } from '../../core/world/gridSpace.ts';
+import { createWalkableLookup, gridToWorld, worldToGrid } from '../../core/world/gridSpace.ts';
 import { tickMsForMap, type FrameState } from '../../game/GameLoop.ts';
 import type { AgentView } from '../../game/views.ts';
 import { AudioManager } from '../AudioManager.ts';
@@ -24,6 +24,8 @@ const ROLE_COLOR: Record<AgentRole, number> = {
 const LOOPS = new Set(['idle', 'walk', 'run']);
 /** Scales the 1.68-1.89 m models down to read as average adults next to the player's eye height. */
 const CHARACTER_SCALE = .9;
+// The survivor's idle pose keeps the boots slightly above the model origin.
+const SURVIVOR_FOOT_OFFSET = .025;
 
 interface ModelInstance {
   root: THREE.Object3D;
@@ -58,6 +60,20 @@ function motionFor(state: AgentState, moving: boolean): string {
   }
 }
 
+function industrialRadioSpot(scene: THREE.Scene, map: MapDefinition) {
+  if (map.id !== 'map_industrial') return undefined;
+  const radio = scene.getObjectByName('radio-indicator')?.parent;
+  if (!radio) return undefined;
+  const walkable = createWalkableLookup(map);
+  const forward = radio.getWorldDirection(new THREE.Vector3());
+  const yaw = Math.atan2(forward.x, forward.z);
+  for (const [side, front] of [[.96, .62], [-1.06, .62], [0, 1.1]]) {
+    const position = radio.localToWorld(new THREE.Vector3(side, -SURVIVOR_FOOT_OFFSET, front));
+    if (walkable(worldToGrid(position, map))) return { position, yaw };
+  }
+  return undefined;
+}
+
 // Keeps the existing AgentView entry point and the loading fallback.
 export class AgentCapsules implements AgentView {
   private readonly root = new THREE.Group();
@@ -66,6 +82,7 @@ export class AgentCapsules implements AgentView {
   private readonly geometry = new THREE.CapsuleGeometry(0.28, 1.04, 4, 10);
   private readonly materials = new Map<AgentRole, THREE.MeshStandardMaterial>();
   private readonly disconnectAudio: () => void;
+  private readonly radioSurvivorSpot: ReturnType<typeof industrialRadioSpot>;
   private lastTick = -1;
   private elapsed = 0;
   private disposed = false;
@@ -73,6 +90,7 @@ export class AgentCapsules implements AgentView {
   constructor(scene: THREE.Scene, private readonly map: MapDefinition) {
     this.root.name = 'agents';
     scene.add(this.root);
+    this.radioSurvivorSpot = industrialRadioSpot(scene, map);
     this.disconnectAudio = AudioManager.bindScene(scene, map);
     const loader = new GLTFLoader();
     for (const role of Object.keys(MODEL_FILES) as AgentRole[]) {
@@ -107,11 +125,19 @@ export class AgentCapsules implements AgentView {
       const from = gridToWorld(before.position, this.map);
       const to = gridToWorld(agent.position, this.map);
       const moving = from.x !== to.x || from.z !== to.z;
-      body.group.position.set(
-        THREE.MathUtils.lerp(from.x, to.x, frame.alpha),
-        0,
-        THREE.MathUtils.lerp(from.z, to.z, frame.alpha),
-      );
+      const refuge = frame.current.refugePosition;
+      const besideRadio = agent.role === 'radio_survivor' && !moving &&
+        agent.position.row === refuge.row && agent.position.col === refuge.col && this.radioSurvivorSpot;
+      if (besideRadio) {
+        body.group.position.copy(besideRadio.position);
+        body.yaw = besideRadio.yaw;
+      } else {
+        body.group.position.set(
+          THREE.MathUtils.lerp(from.x, to.x, frame.alpha),
+          0,
+          THREE.MathUtils.lerp(from.z, to.z, frame.alpha),
+        );
+      }
 
       const look = state === 'attack' && agent.targetPosition ? gridToWorld(agent.targetPosition, this.map) : null;
       const dx = look ? look.x - to.x : to.x - from.x;

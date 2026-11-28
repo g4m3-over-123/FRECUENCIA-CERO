@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { GUNSHOT_SOURCE_ID } from '../core/contracts.ts';
 import type { AgentState, GridCoord, MapDefinition, SoundEvent, WorldSnapshot } from '../core/contracts.ts';
 import { gridToWorld } from '../core/world/gridSpace.ts';
-import { EXPLORER_SCREAM, explorerScreamAt } from './characters/explorerScream.ts';
+import { EXPLORER_SCREAM, EXPLORER_SCREAM_ALIAS, explorerScreamAt, isExplorerScream } from './characters/explorerScream.ts';
 
 const gains = {
-  step: 0.27, metal_door: 0.48, decoy: 0.46, zombie_alert: 0.52,
-  barricade: 0.45, radio: 0.48, ambient: 0.08,
+  step: 0.27, metal_door: 0.68, decoy: 0.46, zombie_alert: 0.56,
+  barricade: 0.45, radio: 0.56, ambient: 0.08,
   gunshot: 0.52, reload: 0.34, dry_fire: 0.21, impact: 0.42,
   gunshot_spas12: 0.56, gunshot_m4: 0.50, gunshot_persuader: 0.48,
   gunshot_mac10: 0.36, gunshot_sawnoff: 0.62,
@@ -32,15 +32,19 @@ type WeaponCue =
   | 'weapon_switch';
 type GrowlCue = 'growl' | 'zombie_growl_2';
 
+const RADIO_GENERATOR = 'refuge_radio_generator';
+const RADIO_EXTRACTION = 'radio_extraction_signal';
 const sourceCues: Readonly<Record<string, SoundCue>> = {
   mara: 'step', step: 'step', mara_step: 'step', mara_sprint: 'step',
   metal_door: 'metal_door', pharmacy_metal_door: 'metal_door',
   decoy: 'decoy', zombie_alert: 'zombie_alert', barricade: 'barricade',
-  [EXPLORER_SCREAM]: 'zombie_alert',
+  [EXPLORER_SCREAM]: 'zombie_alert', [EXPLORER_SCREAM_ALIAS]: 'zombie_alert',
   barricade_place: 'barricade', radio: 'radio',
+  [RADIO_GENERATOR]: 'radio', [RADIO_EXTRACTION]: 'radio',
 };
 
-const combatCues: readonly SoundCue[] = [
+const preloadCues: readonly SoundCue[] = [
+  'metal_door', 'radio',
   'gunshot', 'reload', 'dry_fire', 'impact',
   'gunshot_spas12', 'gunshot_m4', 'gunshot_persuader', 'gunshot_mac10', 'gunshot_sawnoff',
   'reload_shotgun', 'reload_m4', 'reload_mag', 'weapon_switch',
@@ -49,6 +53,12 @@ const combatCues: readonly SoundCue[] = [
 const MAX_VOICES = 12;
 const MAX_DISTANCE = 36;
 const SCREAM_VOICE_MS = 1000; // The reused zombie_alert clip lasts just under a second.
+const RADIO_REPEAT_MS = 1150; // Keeps calibration pulses from overlapping the 1.13 s clip.
+const referenceDistances: Readonly<Partial<Record<SoundCue, number>>> = {
+  metal_door: 4,
+  radio: 3.2,
+  zombie_alert: 2.5,
+};
 
 interface SpatialScene {
   camera: THREE.Camera;
@@ -57,6 +67,7 @@ interface SpatialScene {
 }
 
 interface Voice {
+  cue: SoundCue;
   source: AudioBufferSourceNode;
   panner: PannerNode;
   gain: GainNode;
@@ -125,6 +136,7 @@ export class AudioManager {
   private readonly pendingExplorerAlerts = new Map<string, { tick: number; position: GridCoord }>();
   private listener?: THREE.AudioListener;
   private lastTick = -1;
+  private radioGeneratorAt = -Infinity;
   private generation = 0;
   private ambientRequested = false;
   private unlocked = false;
@@ -187,6 +199,7 @@ export class AudioManager {
 
   reset(): void {
     this.lastTick = -1;
+    this.radioGeneratorAt = -Infinity;
     this.playedSounds.clear();
     this.activeAlerts.clear();
     this.pendingExplorerAlerts.clear();
@@ -259,6 +272,7 @@ export class AudioManager {
       this.stopAgentVoices(id);
     }
 
+    const extractionSignal = snapshot.soundEvents.some((sound) => sound.sourceId === RADIO_EXTRACTION);
     for (const sound of snapshot.soundEvents) {
       const repeated = this.playedSounds.has(sound.id);
       this.playedSounds.set(sound.id, snapshot.tick);
@@ -266,7 +280,11 @@ export class AudioManager {
       if (repeated || snapshot.paused || sound.sourceId === GUNSHOT_SOURCE_ID) continue;
       const cue = this.cueForSound(sound) ?? defaultCue(sound);
       if (!cue) continue;
-      const isScream = sound.sourceId === EXPLORER_SCREAM;
+      if (sound.sourceId === RADIO_GENERATOR) {
+        if (extractionSignal || snapshot.elapsedMs - this.radioGeneratorAt < RADIO_REPEAT_MS) continue;
+        this.radioGeneratorAt = snapshot.elapsedMs;
+      }
+      const isScream = isExplorerScream(sound);
       this.playAt(cue, this.worldPosition(sound.position, isScream ? 1.4 : .8), screamOrigins.get(sound.id));
     }
 
@@ -312,7 +330,7 @@ export class AudioManager {
       }
       this.binding.camera.add(listener);
       this.listener = listener;
-      for (const cue of combatCues) void this.loadBuffer(cue, listener.context);
+      for (const cue of preloadCues) void this.loadBuffer(cue, listener.context);
     }
     if (listener.context.state === 'suspended') void listener.context.resume().catch(() => undefined);
   }
@@ -343,6 +361,11 @@ export class AudioManager {
     position: THREE.Vector3,
     agentId?: string,
   ): void {
+    if (cue === 'radio') {
+      for (const voice of this.voices) {
+        if (voice.cue === 'radio') this.releaseVoice(voice, true);
+      }
+    }
     const oldest = this.voices.values().next().value;
     if (this.voices.size >= MAX_VOICES && oldest) this.releaseVoice(oldest, true);
     const { context } = listener;
@@ -352,14 +375,14 @@ export class AudioManager {
     source.buffer = buffer;
     panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
-    panner.refDistance = cue.startsWith('gunshot') ? 2 : 1.6;
+    panner.refDistance = referenceDistances[cue] ?? (cue.startsWith('gunshot') ? 2 : 1.6);
     panner.maxDistance = MAX_DISTANCE;
     panner.rolloffFactor = 1.15;
     panner.positionX.value = position.x;
     panner.positionY.value = position.y;
     panner.positionZ.value = position.z;
     gain.gain.value = gains[cue];
-    const voice: Voice = { source, panner, gain, agentId };
+    const voice: Voice = { cue, source, panner, gain, agentId };
     this.voices.add(voice);
     try {
       source.connect(panner).connect(gain).connect(listener.getInput());
