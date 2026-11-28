@@ -65,7 +65,9 @@ export class WorldStateView {
   update(snapshot: ExtendedWorldSnapshot, dt: number): void {
     this.time += dt;
     if (this.previous !== snapshot) {
-      const pickups = snapshot.pickups.filter(p => !p.collected);
+      const pickups = snapshot.pickups.filter(
+        p => !p.collected && (this.map.id !== 'map_street' || p.kind === 'medicine')
+      );
       this.sync(this.pickups, pickups, p => p.id, p => p.position, p => this.pickupTemplates[p.kind]);
       if (this.sync(this.barricades, snapshot.barricades, p => p.row + ',' + p.col, p => p, () => this.barricadeTemplate)) {
         this.collidables.length = 0;
@@ -103,7 +105,12 @@ export class WorldStateView {
       this.moon.intensity = THREE.MathUtils.lerp(this.moon.intensity, target.key, alpha);
     }
     if (this.beacon && this.lens) {
-      const active = snapshot.sceneId === 5 || snapshot.extractionOpen || snapshot.extractionTicksRemaining !== null;
+      const act1ExitReady = this.map.id === 'map_street' && snapshot.mara.hasMedicalKit;
+      const active =
+        act1ExitReady ||
+        snapshot.sceneId === 5 ||
+        snapshot.extractionOpen ||
+        snapshot.extractionTicksRemaining !== null;
       this.beacon.color.copy(active ? open : closed);
       const pulse = 0.5 + 0.5 * Math.sin(this.time * (active ? 5 : 4));
       // The lens and ground ring share this material; HDR boost drives green Bloom when active.

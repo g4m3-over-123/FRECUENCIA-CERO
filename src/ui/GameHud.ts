@@ -53,11 +53,11 @@ export class GameHud {
     container.appendChild(this.root);
   }
 
-  update(snapshot: ExtendedWorldSnapshot, pointerLocked: boolean, dt: number): void {
+  update(snapshot: ExtendedWorldSnapshot, pointerLocked: boolean, dt: number, objectiveOverride?: string): void {
     const { mara } = snapshot;
     const def = getWeaponDefinition(mara.weapon.id);
     this.set('scene', `${snapshot.sceneId}. ${snapshot.sceneName}`);
-    this.set('objective', snapshot.sceneObjective);
+    this.set('objective', objectiveOverride ?? snapshot.sceneObjective);
     this.set('health', String(Math.round(mara.health)));
     this.set('posture', mara.posture === 'stealth' ? 'sigilo' : mara.posture === 'sprint' ? 'corriendo' : 'caminando');
     (this.fields.get('health-bar') as HTMLMeterElement).value = mara.health;
@@ -77,7 +77,11 @@ export class GameHud {
     let status = '';
     if (weapon.reloading) status = 'Recargando...';
     else if (weapon.ammoInMagazine === 0) status = weapon.ammoReserve > 0 ? 'Sin balas: R para recargar' : 'Sin munición';
-    else if (snapshot.extractionOpen && snapshot.extractionTicksRemaining !== null) {
+    else if (snapshot.sceneId === 4 && !snapshot.radioActivated && snapshot.radioInstallProgress > 0) {
+      status = `Calibrando radio del refugio: ${snapshot.radioInstallProgress}% · Integridad ${snapshot.refugeIntegrity}%`;
+    } else if (snapshot.sceneId === 4 && snapshot.refugeIntegrity < 100) {
+      status = `Refugio bajo ataque · Integridad ${snapshot.refugeIntegrity}%`;
+    } else if (snapshot.extractionOpen && snapshot.extractionTicksRemaining !== null) {
       status = `Extracción abierta: ${snapshot.extractionTicksRemaining} ticks`;
     } else if (snapshot.paused) status = 'En pausa';
     this.set('status', status);

@@ -170,8 +170,13 @@ async function bootstrap(): Promise<void> {
     comparisons.set(agent.id, { origin: agent.position, destination: agent.targetPosition!, ...result });
   });
 
+  const objectiveFor = (snapshot: ExtendedWorldSnapshot): string =>
+    map.id === 'map_street' && snapshot.mara.hasMedicalKit && !actTransition
+      ? 'Medicina asegurada: sal de la farmacia y alcanza el faro verde al final de la avenida rumbo al complejo industrial.'
+      : snapshot.sceneObjective;
+
   const telemetry = (snapshot: ExtendedWorldSnapshot): MonitorTelemetry => ({
-    objective: snapshot.sceneObjective,
+    objective: objectiveFor(snapshot),
     hasFuel: snapshot.mara.hasFuel,
     hasBattery: snapshot.mara.hasBattery,
     decoys: snapshot.mara.decoysRemaining,
@@ -220,11 +225,12 @@ async function bootstrap(): Promise<void> {
       source.setPaused(true);
       loop.refresh();
       setPlaying(false);
+      sceneManager.unlockPointer();
       void panel
         .playCinematic({
-          kicker: 'Radio activada',
+          kicker: 'Radio activada · Superviviente rescatado',
           title: 'La extracción está abierta',
-          body: 'La señal del refugio abrió una ruta de escape temporal. Corre antes de que se cierre.',
+          body: 'La señal del refugio confirmó el rescate. Sigue el faro verde junto al superviviente antes de que se cierre.',
           durationMs: RADIO_CUT_MS,
         })
         .then(() => {
@@ -244,7 +250,7 @@ async function bootstrap(): Promise<void> {
       Math.max(
         Math.abs(snapshot.mara.position.row - map.extractionPoint.row),
         Math.abs(snapshot.mara.position.col - map.extractionPoint.col)
-      ) <= 1
+      ) <= 2
     ) {
       actTransition = true;
       source.setPaused(true);
@@ -341,9 +347,10 @@ async function bootstrap(): Promise<void> {
   if (params.get('xray') === '1') xray.setEnabled(true);
   if (autostart) {
     panel.closeDialog();
-    loop.start();
-    setPlaying(true);
-    void playIntro();
+    void playIntro().then(() => {
+      loop.start();
+      setPlaying(true);
+    });
   }
 
   let lastStatus = loop.latest().status;
@@ -354,7 +361,8 @@ async function bootstrap(): Promise<void> {
     agents.sync(frame);
     xray.sync(frame);
     weapon.update(dt);
-    hud.update(loop.latest(), sceneManager.isPointerLocked(), dt);
+    const latest = loop.latest();
+    hud.update(latest, sceneManager.isPointerLocked(), dt, objectiveFor(latest));
     if (frame.ticked) panel.update(frame.current, telemetry(frame.current));
     if (frame.current.status !== lastStatus) {
       lastStatus = frame.current.status;

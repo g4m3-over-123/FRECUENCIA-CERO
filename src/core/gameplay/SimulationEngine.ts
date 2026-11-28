@@ -824,6 +824,10 @@ export class SimulationEngine {
         rng: this.rng,
         assignedFocusSlot: flankingSlots.get(runtime.id) ?? null,
         nearbyThreatForSurvivor,
+        escortTarget:
+          runtime.role === 'radio_survivor' && this.radioActivated && this.extractionOpen && this.sceneId === 5
+            ? this.extractionPosition
+            : null,
       });
 
       if (cycle.searchExecuted) {

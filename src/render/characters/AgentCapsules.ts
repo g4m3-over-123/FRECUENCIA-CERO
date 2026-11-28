@@ -46,7 +46,12 @@ interface Body {
   screamId?: string;
 }
 
-function motionFor(state: AgentState, moving: boolean): string {
+function motionFor(role: AgentRole, state: AgentState, moving: boolean, operatingRadio: boolean): string {
+  if (role === 'radio_survivor') {
+    if (moving) return 'run';
+    if (operatingRadio || state === 'alert') return 'scream';
+    return 'idle';
+  }
   switch (state) {
     case 'pursue': return moving ? 'run' : 'idle';
     case 'patrol':
@@ -146,7 +151,6 @@ export class AgentCapsules implements AgentView {
         agent.position.row === refuge.row && agent.position.col === refuge.col && this.radioSurvivorSpot;
       if (besideRadio) {
         body.group.position.copy(besideRadio.position);
-        body.yaw = besideRadio.yaw;
       } else {
         body.group.position.set(
           THREE.MathUtils.lerp(from.x, to.x, frame.alpha),
@@ -155,13 +159,25 @@ export class AgentCapsules implements AgentView {
         );
       }
 
-      const look = state === 'attack' && agent.targetPosition ? gridToWorld(agent.targetPosition, this.map) : null;
-      const dx = look ? look.x - to.x : to.x - from.x;
-      const dz = look ? look.z - to.z : to.z - from.z;
+      const maraWorld = gridToWorld(frame.current.mara.position, this.map);
+      let look: { x: number; z: number } | null =
+        state === 'attack' && agent.targetPosition ? gridToWorld(agent.targetPosition, this.map) : null;
+      if (agent.role === 'radio_survivor' && !moving) {
+        if (state === 'alert' && agent.targetPosition) {
+          look = gridToWorld(agent.targetPosition, this.map);
+        } else if (Math.hypot(maraWorld.x - body.group.position.x, maraWorld.z - body.group.position.z) <= 9) {
+          look = maraWorld;
+        }
+      }
+      const dx = look ? look.x - body.group.position.x : to.x - from.x;
+      const dz = look ? look.z - body.group.position.z : to.z - from.z;
       if (state !== 'dead' && (dx !== 0 || dz !== 0)) {
         const targetYaw = Math.atan2(dx, dz);
         const delta = Math.atan2(Math.sin(targetYaw - body.yaw), Math.cos(targetYaw - body.yaw));
         body.yaw += delta * (1 - Math.exp(-15 * dt));
+      } else if (besideRadio) {
+        const delta = Math.atan2(Math.sin(besideRadio.yaw - body.yaw), Math.cos(besideRadio.yaw - body.yaw));
+        body.yaw += delta * (1 - Math.exp(-8 * dt));
       }
       body.group.rotation.y = body.yaw;
 
@@ -170,9 +186,14 @@ export class AgentCapsules implements AgentView {
       else if (!frame.current.paused) {
         body.screamId = explorerScreamAt(agent, frame.current.soundEvents)?.id ?? body.screamId;
       }
+      const operatingRadio =
+        agent.role === 'radio_survivor' &&
+        !moving &&
+        frame.current.radioInstallProgress > 0 &&
+        !frame.current.radioActivated;
       const hit = state === 'stunned' && agent.health < body.health;
       const newScream = body.screamId !== undefined && body.screamId !== previousScreamId;
-      if (body.model) this.animate(body, state, moving, dt, hit, newScream);
+      if (body.model) this.animate(body, state, moving, dt, hit, newScream, operatingRadio);
       else this.animateFallback(body.fallback, state);
       body.state = state;
       body.health = agent.health;
@@ -259,16 +280,26 @@ export class AgentCapsules implements AgentView {
     body.model = { root, meshes, mixer, clips };
   }
 
-  private animate(body: Body, state: AgentState, moving: boolean, dt: number, hit: boolean, newScream: boolean): void {
+  private animate(
+    body: Body,
+    state: AgentState,
+    moving: boolean,
+    dt: number,
+    hit: boolean,
+    newScream: boolean,
+    operatingRadio: boolean
+  ): void {
     const model = body.model!;
     const scream = body.screamId === undefined ? undefined : model.clips.get('scream');
     const screamTime = scream ? model.mixer.existingAction(scream)?.time ?? 0 : 0;
     const screaming = scream !== undefined && (newScream || screamTime < scream.duration);
-    const clip = screaming ? scream : model.clips.get(motionFor(state, moving)) ?? model.clips.get('idle');
+    const clip = screaming
+      ? scream
+      : model.clips.get(motionFor(body.role, state, moving, operatingRadio)) ?? model.clips.get('idle');
     const restart = hit || (screaming && newScream);
     if (clip && (restart || model.action?.getClip() !== clip)) {
       const action = model.mixer.clipAction(clip);
-      const loop = LOOPS.has(clip.name);
+      const loop = LOOPS.has(clip.name) || (body.role === 'radio_survivor' && clip.name === 'scream');
       action.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
       if (screaming) {
         // The sound arrives one tick into the three-tick hold.

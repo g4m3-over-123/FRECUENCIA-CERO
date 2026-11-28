@@ -129,6 +129,7 @@ export interface AgentCycleInput {
   rng: SeededRng;
   assignedFocusSlot?: GridCoord | null;
   nearbyThreatForSurvivor?: GridCoord | null;
+  escortTarget?: GridCoord | null;
 }
 
 export interface AgentCycleOutput {
@@ -330,6 +331,7 @@ export class AgentBrain {
       rng,
       assignedFocusSlot = null,
       nearbyThreatForSurvivor = null,
+      escortTarget = null,
     } = input;
 
     const profile = AGENT_PROFILES[runtime.role];
@@ -381,7 +383,15 @@ export class AgentBrain {
 
     // Special autonomous behavior for the stationary/defensive radio_survivor ally
     if (runtime.role === 'radio_survivor') {
-      return this.executeRadioSurvivorCycle(runtime, nearbyThreatForSurvivor, tick);
+      return this.executeRadioSurvivorCycle(
+        runtime,
+        nearbyThreatForSurvivor,
+        escortTarget,
+        graph,
+        algorithm,
+        heuristic,
+        tick
+      );
     }
 
     // 2. Memory update & decay stage
@@ -687,13 +697,71 @@ export class AgentBrain {
   private executeRadioSurvivorCycle(
     runtime: AgentRuntimeState,
     nearbyThreat: GridCoord | null,
+    escortTarget: GridCoord | null,
+    graph: WeightedGraph,
+    algorithm: AlgorithmType,
+    heuristic: HeuristicType,
     tick: number
   ): AgentCycleOutput {
     const previousState = runtime.state;
     let planChanged = false;
     let planChangeReason: string | null = null;
+    let searchExecuted: SearchStats | null = null;
+    let moved = false;
 
-    if (nearbyThreat) {
+    // Once the rescue radio broadcast opens extraction, evacuate to the extraction zone via graph pathfinding.
+    if (escortTarget) {
+      if (gridDistance(runtime.position, escortTarget) <= 1) {
+        runtime.state = 'idle';
+        runtime.currentPath = [];
+        runtime.targetPosition = { ...escortTarget };
+        runtime.goalReason = 'reached extraction zone, awaiting Mara';
+        runtime.perceptionSummary = `safe at extraction (${escortTarget.row},${escortTarget.col})`;
+      } else {
+        runtime.state = 'alert';
+        runtime.targetPosition = { ...escortTarget };
+        runtime.goalReason = 'evacuating to extraction point';
+        runtime.perceptionSummary = `radio rescue confirmed; moving to extraction (${escortTarget.row},${escortTarget.col})`;
+
+        const blockedOnPath = this.findBlockedStepOnCurrentPath(runtime.currentPath, graph);
+        const pathTail = runtime.currentPath[runtime.currentPath.length - 1] ?? null;
+        const needsReplan =
+          runtime.currentPath.length < 2 ||
+          !sameCoord(runtime.currentPath[0], runtime.position) ||
+          !sameCoord(pathTail, escortTarget) ||
+          blockedOnPath !== null;
+
+        if (needsReplan) {
+          const target = resolveWalkableTarget(graph, escortTarget);
+          if (target) {
+            const result = findPath(graph, algorithm, runtime.position, target, heuristic);
+            runtime.lastSearch = result;
+            runtime.algorithmUsed = algorithm;
+            runtime.heuristicUsed = heuristic;
+            searchExecuted = result;
+            if (result.found && result.path.length > 0) {
+              runtime.currentPath = result.path.map((p: GridCoord) => ({ ...p }));
+              planChanged = true;
+              runtime.planChanges++;
+              planChangeReason = `${runtime.id} planned evacuation route (${result.path.length - 1} steps)`;
+            } else {
+              runtime.currentPath = [];
+            }
+          }
+        }
+
+        const profile = AGENT_PROFILES.radio_survivor;
+        if (runtime.currentPath.length >= 2 && tick - runtime.lastMoveTick >= profile.activeMoveEveryTicks) {
+          const nextStep = runtime.currentPath[1];
+          if (graph.isWalkable(nextStep)) {
+            runtime.position = { ...nextStep };
+            runtime.currentPath = runtime.currentPath.slice(1);
+            runtime.lastMoveTick = tick;
+            moved = true;
+          }
+        }
+      }
+    } else if (nearbyThreat) {
       runtime.state = 'alert';
       runtime.targetPosition = { ...nearbyThreat };
       runtime.memoryStore.recordEvidence({
@@ -724,8 +792,8 @@ export class AgentBrain {
       emittedSound: null,
       planChanged,
       planChangeReason,
-      searchExecuted: null,
-      moved: false,
+      searchExecuted,
+      moved,
     };
   }
 
