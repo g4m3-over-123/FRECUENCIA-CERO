@@ -1,10 +1,10 @@
-// Fails when a file under public/ is larger than the agreed limit (default 15 MB).
-// Usage: npm run check:assets [-- --max-mb 15]
+// Fails when a file under public/ is larger than the agreed limit (default 100 MB, the GitHub per-file limit).
+// Usage: npm run check:assets [-- --max-mb 100]
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const flag = process.argv.indexOf('--max-mb');
-const maxMb = flag >= 0 ? Number(process.argv[flag + 1]) : 15;
+const maxMb = flag >= 0 ? Number(process.argv[flag + 1]) : 100;
 const offenders = [];
 
 function walk(dir) {

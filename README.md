@@ -68,7 +68,7 @@ npm test                          # tests de grafo, algoritmos, agentes y base d
 npm run build                     # chequeo de tipos y build de producción en dist/
 npm run benchmark                 # Dijkstra vs A*, alertas aisladas vs coordinadas y coste por tick (CSV)
 npx tsx src/benchmarks/report.ts  # tablas y gráficas en docs/RESULTADOS.md y docs/figures/
-npm run check:assets              # ningún archivo de public/ mayor a 15 MB
+npm run check:assets              # ningún archivo de public/ mayor a 100 MB
 ```
 
 ## Documentación

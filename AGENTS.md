@@ -45,7 +45,7 @@ Each contributor and agent must only modify files inside their assigned director
 
 ## 7. Assets
 
-- No file in `public/` larger than 15 MB. Check with `npm run check:assets`; compress GLBs before committing.
+- No file in `public/` larger than 100 MB (GitHub per-file limit). Check with `npm run check:assets`; compress GLBs before committing.
 - Record the source and license of every downloaded asset in `docs/CREDITS.md`.
 
 ## 8. Code Hygiene

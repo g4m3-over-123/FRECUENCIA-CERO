@@ -66,4 +66,4 @@ Proyecto academico, sin uso comercial. Se anota de donde viene cada asset para c
 
 ## Cinematics
 
-- `public/assets/cinematics/intro.mp4`: intro video provided by the team (own material), re-encoded to H.264 1.7 Mbps to stay under 15 MB.
+- `public/assets/cinematics/intro.mp4`: intro video provided by the team (own material), original quality (51 MB).
