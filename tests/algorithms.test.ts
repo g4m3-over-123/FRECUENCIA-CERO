@@ -11,8 +11,7 @@ import { runDijkstra } from '../src/core/algorithms/dijkstra.ts';
 import { runAStar } from '../src/core/algorithms/astar.ts';
 import { createHeuristic } from '../src/core/algorithms/heuristics.ts';
 import { propagateAlertRecursive } from '../src/core/algorithms/alertRecursion.ts';
-import { PathCache, findPath, isPathStillValid } from '../src/core/algorithms/index.ts';
-import { runTickCostBenchmarks, summarizeTickCost } from '../src/benchmarks/tickCost.ts';
+import { findPath } from '../src/core/algorithms/index.ts';
 
 /** Builds a map from ASCII rows: '.' street, '#' building, '~' cost 5, 'S' spawn, 'E' extraction. */
 function asciiMap(rows: string[]): MapDefinition {
@@ -340,110 +339,5 @@ describe('propagateAlertRecursive', () => {
     const result = propagateAlertRecursive('ghost', [agent('a', 0, 0)], 5, 5);
     expect(result.reachedAgentIds).toEqual([]);
     expect(result.recursiveCalls).toBe(0);
-  });
-});
-
-describe('WeightedGraph.version', () => {
-  it('increments only when the graph really changes', () => {
-    const graph = new WeightedGraph(generateCityMap(12, 12, 3));
-    const v0 = graph.version;
-    graph.setBlocked({ row: 0, col: 0 }, false);
-    expect(graph.version).toBe(v0);
-    graph.setBlocked({ row: 0, col: 0 }, true);
-    expect(graph.version).toBe(v0 + 1);
-    graph.setCost({ row: 0, col: 1 }, graph.getCost({ row: 0, col: 1 }));
-    expect(graph.version).toBe(v0 + 1);
-    graph.setCost({ row: 0, col: 1 }, 7);
-    expect(graph.version).toBe(v0 + 2);
-    expect(graph.clone().version).toBe(graph.version);
-  });
-});
-
-describe('PathCache', () => {
-  const map = generateCityMap(30, 30, 99);
-  const start = map.spawnMara;
-  const goal = map.extractionPoint;
-
-  it('returns the same optimal result as a fresh search and counts hits', () => {
-    const graph = new WeightedGraph(map);
-    const cache = new PathCache();
-    const first = cache.find(graph, 'astar', start, goal, 'octile');
-    const second = cache.find(graph, 'astar', start, goal, 'octile');
-    const fresh = findPath(graph, 'astar', start, goal, 'octile');
-    expect(first.cacheHit).toBe(false);
-    expect(second.cacheHit).toBe(true);
-    expect(second.totalCost).toBeCloseTo(fresh.totalCost, 9);
-    expect(second.path).toEqual(fresh.path);
-    expect(second.path).not.toBe(first.path);
-    expect(cache.stats()).toMatchObject({ hits: 1, misses: 1, size: 1 });
-  });
-
-  it('keeps algorithms and heuristics apart', () => {
-    const graph = new WeightedGraph(map);
-    const cache = new PathCache();
-    cache.find(graph, 'astar', start, goal, 'octile');
-    expect(cache.find(graph, 'dijkstra', start, goal).cacheHit).toBe(false);
-    expect(cache.find(graph, 'astar', start, goal, 'euclidean').cacheHit).toBe(false);
-    expect(cache.stats().size).toBe(3);
-  });
-
-  it('invalidates when a barricade changes the graph', () => {
-    const graph = new WeightedGraph(map);
-    const cache = new PathCache();
-    const before = cache.find(graph, 'astar', start, goal, 'octile');
-    const cut = before.path[Math.floor(before.path.length / 2)];
-    graph.setBlocked(cut, true);
-    const after = cache.find(graph, 'astar', start, goal, 'octile');
-    expect(after.cacheHit).toBe(false);
-    expect(after.path.some((p) => p.row === cut.row && p.col === cut.col)).toBe(false);
-    expect(after.totalCost).toBeCloseTo(runDijkstra(graph, start, goal).totalCost, 9);
-    expect(cache.stats().invalidations).toBe(1);
-  });
-
-  it('evicts the least recently used entry when full', () => {
-    const graph = new WeightedGraph(map);
-    const cache = new PathCache(2);
-    const cells = map.cells.filter((c) => c.walkable).slice(0, 3);
-    cache.find(graph, 'astar', start, cells[0]);
-    cache.find(graph, 'astar', start, cells[1]);
-    cache.find(graph, 'astar', start, cells[0]);
-    cache.find(graph, 'astar', start, cells[2]);
-    expect(cache.find(graph, 'astar', start, cells[0]).cacheHit).toBe(true);
-    expect(cache.find(graph, 'astar', start, cells[1]).cacheHit).toBe(false);
-  });
-});
-
-describe('isPathStillValid', () => {
-  it('detects when a path is cut and ignores unrelated changes', () => {
-    const map = generateCityMap(30, 30, 5);
-    const graph = new WeightedGraph(map);
-    const path = runAStar(graph, map.spawnMara, map.extractionPoint).path;
-    expect(isPathStillValid(graph, path)).toBe(true);
-    const onPath = new Set(path.map((p) => `${p.row},${p.col}`));
-    const unrelated = map.cells.find((c) => c.walkable && !onPath.has(`${c.row},${c.col}`) && Math.abs(c.row - path[0].row) > 3)!;
-    graph.setBlocked(unrelated, true);
-    expect(isPathStillValid(graph, path)).toBe(true);
-    graph.setBlocked(path[Math.floor(path.length / 2)], true);
-    expect(isPathStillValid(graph, path)).toBe(false);
-    expect(isPathStillValid(graph, [])).toBe(false);
-  });
-});
-
-describe('tick cost benchmark', () => {
-  it('measures the same number of ticks for isolated and coordinated runs', () => {
-    const map = generateCityMap(24, 24, 11);
-    const rows = runTickCostBenchmarks([{ label: 'gen_24', map }], {
-      zombieCounts: [4],
-      repetitions: 1,
-      ticks: 30,
-      algorithms: [{ algorithm: 'astar', heuristic: 'octile' }],
-    });
-    expect(rows.map((r) => r.mode)).toEqual(['isolated', 'coordinated']);
-    for (const row of rows) {
-      expect(row.ticks).toBe(30);
-      expect(Number(row.tick_ms_mean)).toBeGreaterThanOrEqual(0);
-      expect(Number(row.redundant_rate)).toBeGreaterThanOrEqual(0);
-    }
-    expect(summarizeTickCost(rows)).toHaveLength(2);
   });
 });

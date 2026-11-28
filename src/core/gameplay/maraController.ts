@@ -41,32 +41,6 @@ export interface MaraControllerOptions {
   occupiedByAgents?: readonly GridCoord[];
   protectedCells?: readonly GridCoord[];
   decoyThrowRange?: number;
-  cellSize?: number;
-}
-
-export function getScaledRadiiForCellSize(cellSize = 2): {
-  stepRadius: number;
-  sprintRadius: number;
-  decoyRadius: number;
-  decoyThrowRange: number;
-  barricadeRadius: number;
-} {
-  const isFineGrid = cellSize <= 1;
-  return isFineGrid
-    ? {
-        stepRadius: 5,
-        sprintRadius: 12,
-        decoyRadius: 18,
-        decoyThrowRange: 7,
-        barricadeRadius: 9,
-      }
-    : {
-        stepRadius: 2.5,
-        sprintRadius: 7,
-        decoyRadius: 12,
-        decoyThrowRange: 4,
-        barricadeRadius: 5,
-      };
 }
 
 const SPRINT_STAMINA_COST = 8;
@@ -278,8 +252,7 @@ export function updateMaraState(
     }
   }
 
-  const scaled = getScaledRadiiForCellSize(options.cellSize);
-  const emittedSound = applyMovementNoise(next, posture, moved, tick, options.cellSize);
+  const emittedSound = applyMovementNoise(next, posture, moved, tick);
 
   let decoySound: SoundEvent | null = null;
   if (input.emitDecoy && next.decoysRemaining > 0) {
@@ -288,14 +261,14 @@ export function updateMaraState(
       next.facing,
       options.graph,
       input.decoyTarget,
-      options.decoyThrowRange ?? scaled.decoyThrowRange
+      options.decoyThrowRange ?? 4
     );
     next.decoysRemaining--;
     decoySound = {
       id: `sound-decoy-${tick}`,
       sourceId: `decoy-${tick}`,
       position: landing,
-      radius: scaled.decoyRadius,
+      radius: 12,
       intensity: 1,
       timestamp: tick,
     };
@@ -319,7 +292,7 @@ export function updateMaraState(
         id: `sound-barricade-${tick}`,
         sourceId: 'barricade_place',
         position: { ...cell },
-        radius: scaled.barricadeRadius,
+        radius: 5,
         intensity: 0.62,
         timestamp: tick,
       };
@@ -344,8 +317,7 @@ function applyMovementNoise(
   next: ExtendedMaraSnapshot,
   posture: MaraPosture,
   moved: boolean,
-  tick: number,
-  cellSize = 2
+  tick: number
 ): SoundEvent | null {
   if (!moved) {
     next.noiseLevel = 0;
@@ -357,7 +329,6 @@ function applyMovementNoise(
     next.stamina = Math.min(100, next.stamina + STEALTH_STAMINA_RECOVERY);
     return null;
   }
-  const scaled = getScaledRadiiForCellSize(cellSize);
   if (posture === 'sprint') {
     next.noiseLevel = 0.85;
     next.stamina = Math.max(0, next.stamina - SPRINT_STAMINA_COST);
@@ -365,7 +336,7 @@ function applyMovementNoise(
       id: `sound-sprint-${tick}`,
       sourceId: 'mara_sprint',
       position: { ...next.position },
-      radius: scaled.sprintRadius,
+      radius: 7,
       intensity: 0.85,
       timestamp: tick,
     };
@@ -376,7 +347,7 @@ function applyMovementNoise(
     id: `sound-step-${tick}`,
     sourceId: 'mara_step',
     position: { ...next.position },
-    radius: scaled.stepRadius,
+    radius: 2.5,
     intensity: 0.32,
     timestamp: tick,
   };
@@ -386,7 +357,6 @@ export interface ExternalMaraMove {
   cell: GridCoord;
   posture: MaraPosture;
   facing?: GridCoord;
-  cellSize?: number;
 }
 
 /**
@@ -399,8 +369,7 @@ export function applyExternalMaraMove(
   mara: MaraSnapshot,
   move: ExternalMaraMove,
   tick: number,
-  graph?: WeightedGraph,
-  cellSize = move.cellSize ?? 2
+  graph?: WeightedGraph
 ): { mara: ExtendedMaraSnapshot; emittedSound: SoundEvent | null; moved: boolean } {
   const next = toExtendedMara(mara);
   const target = move.cell;
@@ -421,6 +390,6 @@ export function applyExternalMaraMove(
   if (posture === 'sprint' && next.stamina < SPRINT_STAMINA_COST) posture = 'walk';
   next.posture = posture;
 
-  const emittedSound = applyMovementNoise(next, posture, moved, tick, cellSize);
+  const emittedSound = applyMovementNoise(next, posture, moved, tick);
   return { mara: next, emittedSound, moved };
 }

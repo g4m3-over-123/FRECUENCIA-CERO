@@ -51,7 +51,6 @@ export class WeightedGraph {
   private readonly cellCost: Float64Array;
   private adjacency: IdEdge[][];
   private minCostCache: number | null = null;
-  private versionCounter = 0;
 
   constructor(map: MapDefinition, options: WeightedGraphOptions = {}) {
     this.width = map.width;
@@ -137,21 +136,10 @@ export class WeightedGraph {
     return this.minCostCache;
   }
 
-  /**
-   * Increments every time the graph actually changes (setBlocked / setCost).
-   * Planners compare it to know whether a cached path may be stale.
-   */
-  get version(): number {
-    return this.versionCounter;
-  }
-
   /** Blocks or unblocks a cell (e.g. a barricade) and updates only the affected edges. */
   setBlocked(node: GridCoord, blocked: boolean): void {
     if (!this.inBounds(node)) return;
-    const id = this.toId(node);
-    const next = blocked ? 0 : 1;
-    if (this.walkable[id] === next) return;
-    this.walkable[id] = next;
+    this.walkable[this.toId(node)] = blocked ? 0 : 1;
     this.refreshAround(node);
   }
 
@@ -161,9 +149,7 @@ export class WeightedGraph {
     if (!Number.isFinite(cost) || cost < 0) {
       throw new Error(`Invalid cell cost ${cost}: costs must be finite and non-negative`);
     }
-    const id = this.toId(node);
-    if (this.cellCost[id] === cost) return;
-    this.cellCost[id] = cost;
+    this.cellCost[this.toId(node)] = cost;
     this.refreshAround(node);
   }
 
@@ -179,14 +165,12 @@ export class WeightedGraph {
       cellCost: this.cellCost.slice(),
       adjacency: this.adjacency.map((edges) => edges.map((e) => ({ ...e }))),
       minCostCache: this.minCostCache,
-      versionCounter: this.versionCounter,
     });
     return copy;
   }
 
   private refreshAround(node: GridCoord): void {
     this.minCostCache = null;
-    this.versionCounter++;
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         const n = { row: node.row + dr, col: node.col + dc };

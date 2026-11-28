@@ -104,9 +104,6 @@ body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-
 .monitor-legend .pharmacy { --key-color: #80d6a5; }
 .monitor-legend .refuge { --key-color: #f0bf76; }
 .monitor-legend .extraction { --key-color: #f3948c; }
-.monitor-legend .explorer { --key-color: #a3e635; }
-.monitor-legend .pursuer { --key-color: #f87171; }
-.monitor-legend .barricade { --key-color: #e5ac73; }
 
 .monitor-data { display: grid; grid-template-columns: 1fr minmax(0, 1.12fr); gap: 5px 8px; font-size: .75rem; }
 .monitor-data dt { color: var(--muted); }
@@ -172,31 +169,3 @@ body { background: #0b1017; color: var(--text); font: 15px/1.45 system-ui, sans-
   border-radius: 10px; background: #0b1017cc; text-align: center; font-size: .75rem; color: var(--muted); }
 .hud-lock p { margin: 2px 0; }
 .hud-lock b { color: var(--text); font-size: .95rem; }
-
-/* X-ray legend (src/render/debug/DebugVisuals.ts) */
-.xray-legend { position: absolute; z-index: 6; top: 72px; left: 16px; width: min(280px, calc(100vw - 32px)); padding: 10px 12px;
-  border: 1px solid var(--line); border-radius: 10px; background: #0b1017d9; color: var(--text); font: .7rem/1.35 var(--mono);
-  pointer-events: none; }
-.xray-legend p { margin: 0; }
-.xray-legend ul { display: grid; gap: 3px; margin: 8px 0; padding: 0; list-style: none; color: var(--muted); }
-.xray-legend li { display: flex; align-items: center; gap: 8px; }
-.xray-title { display: flex; justify-content: space-between; gap: 8px; color: var(--accent); font-weight: 700; letter-spacing: .06em; }
-.xray-title span { color: var(--warning); font-weight: 400; letter-spacing: 0; }
-.xray-stats { color: var(--text); font-variant-numeric: tabular-nums; }
-.xray-hint { margin-top: 4px !important; color: var(--muted); }
-.xray-swatch { flex: none; width: 14px; height: 10px; }
-.xray-line { height: 3px; background: var(--c); }
-.xray-square { background: color-mix(in srgb, var(--c) 45%, transparent); }
-.xray-diamond { width: 9px; height: 9px; margin: 0 2px; border: 2px solid var(--c); rotate: 45deg; }
-.xray-ring { width: 10px; height: 10px; margin: 0 2px; border: 2px solid var(--c); border-radius: 50%; }
-.xray-cross { background: linear-gradient(45deg, transparent 42%, var(--c) 42% 58%, transparent 58%),
-  linear-gradient(-45deg, transparent 42%, var(--c) 42% 58%, transparent 58%); height: 12px; width: 12px; margin: 0 1px; }
-
-/* HUD warnings */
-.hud-ammo.low b { color: #f87171; }
-.hud-ammo.reloading b { color: var(--warning); }
-.hud-status { color: var(--warning); font-size: .75rem; min-height: 1em; }
-.hud-damage { position: absolute; inset: 0; opacity: 0; transition: opacity .35s ease-out;
-  background: radial-gradient(ellipse at center, transparent 55%, #b91c1c99 100%); }
-.hud-damage.visible { opacity: 1; transition: none; }
-.hud-bar.critical b { color: #f87171; }

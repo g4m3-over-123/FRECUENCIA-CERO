@@ -2,15 +2,11 @@
  * Headless benchmark runner for Dijkstra vs A* and recursive alert propagation.
  * Must remain completely decoupled from Three.js and browser DOM APIs.
  *
- * Usage: npm run benchmark -- [--reps=5] [--inner=15] [--seed=2026] [--ticks=200] [--no-tick]
- * Maps: generated 20x20, 32x32, 50x50 (one seed per repetition) plus the files in
- * public/maps (map_small, map_medium, map_large and map_street, the FPV street grid).
+ * Usage: npm run benchmark -- [--reps=5] [--inner=15] [--seed=2026]
  * Output (src/benchmarks/results/):
  *   benchmark_results.csv   one row per (map, repetition, scenario, algorithm)
- *   benchmark_summary.csv   mean / std grouped by map, scenario and algorithm
+ *   benchmark_summary.csv   mean / std grouped by size, scenario and algorithm
  *   alert_results.csv       isolated vs coordinated agents with the same seeds
- *   tick_cost.csv           full simulation cost per tick vs number of zombies
- *   tick_cost_summary.csv   tick_cost.csv averaged over repetitions
  *   run_metadata.json       machine, runtime, seeds and parameters
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -27,7 +23,6 @@ import { runDijkstra } from '../core/algorithms/dijkstra.ts';
 import { isHeuristicAdmissible } from '../core/algorithms/heuristics.ts';
 import type { SearchStats } from '../core/algorithms/shortestPath.ts';
 import { propagateAlertRecursive } from '../core/algorithms/alertRecursion.ts';
-import { runTickCostBenchmarks, summarizeTickCost, type TickCostCase } from './tickCost.ts';
 
 export interface BenchmarkOptions {
   sizes: number[];
@@ -36,10 +31,6 @@ export interface BenchmarkOptions {
   baseSeed: number;
   outDir: string;
   quiet: boolean;
-  /** Ticks simulated per tick-cost run (0 skips the tick-cost benchmark). */
-  ticks: number;
-  tickRepetitions: number;
-  zombieCounts: number[];
 }
 
 interface Condition {
@@ -67,9 +58,6 @@ const DEFAULT_OPTIONS: BenchmarkOptions = {
   baseSeed: 2026,
   outDir: resolve(HERE, 'results'),
   quiet: false,
-  ticks: 200,
-  tickRepetitions: 3,
-  zombieCounts: [4, 8, 16, 32, 64],
 };
 
 const CONDITIONS_8: Condition[] = [
@@ -88,20 +76,7 @@ const PUBLIC_MAPS: Array<{ file: string; size: number }> = [
   { file: 'map_small.json', size: 20 },
   { file: 'map_medium.json', size: 32 },
   { file: 'map_large.json', size: 50 },
-  // FPV street grid (46 x 56, 1 m cells). size = longest side.
-  { file: 'map_street.json', size: 56 },
 ];
-
-function loadPublicMap(file: string): MapDefinition | null {
-  const path = resolve(ROOT, 'public', 'maps', file);
-  if (!existsSync(path)) return null;
-  return parseMapDefinition(JSON.parse(readFileSync(path, 'utf-8')));
-}
-
-/** Group label: the file id for public maps, gen_<size> for generated ones. */
-function mapLabel(row: Row): string {
-  return row.source === 'file' ? String(row.map_id) : `gen_${row.size}`;
-}
 
 function runCondition(graph: WeightedGraph, start: GridCoord, goal: GridCoord, c: Condition): SearchStats {
   return c.algorithm === 'dijkstra'
@@ -176,8 +151,9 @@ function collectMapCases(options: BenchmarkOptions): MapCase[] {
     }
   }
   for (const { file, size } of PUBLIC_MAPS) {
-    const map = loadPublicMap(file);
-    if (!map) continue;
+    const path = resolve(ROOT, 'public', 'maps', file);
+    if (!existsSync(path)) continue;
+    const map = parseMapDefinition(JSON.parse(readFileSync(path, 'utf-8')));
     for (let rep = 0; rep < options.repetitions; rep++) {
       cases.push({ map, size, seed: null, rep, source: 'file' });
     }
@@ -271,7 +247,7 @@ function runPathfindingBenchmarks(options: BenchmarkOptions): Row[] {
 function summarize(rows: Row[]): Row[] {
   const groups = new Map<string, Row[]>();
   for (const row of rows) {
-    const key = [mapLabel(row), row.movement, row.scenario, row.algorithm, row.heuristic].join('|');
+    const key = [row.source, row.size, row.movement, row.scenario, row.algorithm, row.heuristic].join('|');
     const list = groups.get(key) ?? [];
     list.push(row);
     groups.set(key, list);
@@ -283,7 +259,6 @@ function summarize(rows: Row[]): Row[] {
     const times = nums('time_ms');
     summary.push({
       source: first.source,
-      map: mapLabel(first),
       size: first.size,
       movement: first.movement,
       scenario: first.scenario,
@@ -307,7 +282,6 @@ function summarize(rows: Row[]): Row[] {
     (a, b) =>
       String(a.source).localeCompare(String(b.source)) ||
       Number(a.size) - Number(b.size) ||
-      String(a.map).localeCompare(String(b.map)) ||
       Number(b.movement) - Number(a.movement) ||
       String(a.scenario).localeCompare(String(b.scenario)) ||
       String(a.algorithm).localeCompare(String(b.algorithm)) ||
@@ -340,26 +314,11 @@ function runAlertBenchmarks(options: BenchmarkOptions): Row[] {
   const commRadius = 7;
   const depths = [1, 2, 4, 8];
 
-  const cases: Array<{ label: string; size: number; seed: number; rep: number; map: MapDefinition; agentCount: number }> = [];
   for (const size of options.sizes) {
     const agentCount = Math.max(6, Math.round((size * size) / 40));
     for (let rep = 0; rep < options.repetitions; rep++) {
       const seed = options.baseSeed + size * 1000 + rep;
-      cases.push({ label: `gen_${size}`, size, seed, rep, map: generateCityMap(size, size, seed), agentCount });
-    }
-  }
-  // Same seeds on the fixed street grid: only the agent placement changes between repetitions.
-  const street = loadPublicMap('map_street.json');
-  if (street) {
-    const walkable = street.cells.filter((c) => c.walkable).length;
-    const agentCount = Math.max(6, Math.round(walkable / 30));
-    for (let rep = 0; rep < options.repetitions; rep++) {
-      cases.push({ label: 'map_street', size: Math.max(street.width, street.height), seed: options.baseSeed + 56000 + rep, rep, map: street, agentCount });
-    }
-  }
-
-  for (const { label, size, seed, rep, map, agentCount } of cases) {
-    {
+      const map = generateCityMap(size, size, seed);
       const graph = new WeightedGraph(map);
       const rng = new SeededRng(seed + 991);
       const agents = Array.from({ length: agentCount }, (_, i) => makeAgent(`z${i}`, randomWalkable(graph, rng)));
@@ -369,8 +328,8 @@ function runAlertBenchmarks(options: BenchmarkOptions): Row[] {
       let noise = anchor;
       for (let attempt = 0; attempt < 50; attempt++) {
         const candidate = {
-          row: Math.min(map.height - 1, Math.max(0, anchor.row + rng.int(-3, 3))),
-          col: Math.min(map.width - 1, Math.max(0, anchor.col + rng.int(-3, 3))),
+          row: Math.min(size - 1, Math.max(0, anchor.row + rng.int(-3, 3))),
+          col: Math.min(size - 1, Math.max(0, anchor.col + rng.int(-3, 3))),
         };
         if (graph.isWalkable(candidate)) {
           noise = candidate;
@@ -395,7 +354,6 @@ function runAlertBenchmarks(options: BenchmarkOptions): Row[] {
       };
 
       const base = {
-        map: label,
         size,
         seed,
         rep,
@@ -470,30 +428,14 @@ function parseArgs(argv: string[]): Partial<BenchmarkOptions> {
     if (key === 'seed') parsed.baseSeed = Number(value);
     if (key === 'sizes') parsed.sizes = value.split(',').map(Number);
     if (key === 'quiet') parsed.quiet = true;
-    if (key === 'ticks') parsed.ticks = Math.max(0, Number(value));
-    if (key === 'no-tick') parsed.ticks = 0;
-    if (key === 'tick-reps') parsed.tickRepetitions = Math.max(1, Number(value));
-    if (key === 'zombies') parsed.zombieCounts = value.split(',').map(Number);
   }
   return parsed;
-}
-
-function tickCases(options: BenchmarkOptions): TickCostCase[] {
-  const cases: TickCostCase[] = [];
-  const street = loadPublicMap('map_street.json');
-  if (street) cases.push({ label: 'map_street', map: street });
-  for (const size of options.sizes.filter((s) => s >= 32)) {
-    cases.push({ label: `gen_${size}`, map: generateCityMap(size, size, options.baseSeed + size * 1000) });
-  }
-  return cases;
 }
 
 export async function runBenchmarkSuite(overrides: Partial<BenchmarkOptions> = {}): Promise<{
   results: Row[];
   summary: Row[];
   alerts: Row[];
-  tickCost: Row[];
-  tickSummary: Row[];
 }> {
   const options: BenchmarkOptions = { ...DEFAULT_OPTIONS, ...overrides };
   const log = (msg: string): void => {
@@ -508,26 +450,11 @@ export async function runBenchmarkSuite(overrides: Partial<BenchmarkOptions> = {
   const results = runPathfindingBenchmarks(options);
   const summary = summarize(results);
   const alerts = runAlertBenchmarks(options);
-  log('Pathfinding and alert benchmarks done; measuring cost per tick...');
-  const tickCost =
-    options.ticks > 0
-      ? runTickCostBenchmarks(tickCases(options), {
-          ticks: options.ticks,
-          repetitions: options.tickRepetitions,
-          zombieCounts: options.zombieCounts,
-          baseSeed: options.baseSeed,
-        })
-      : [];
-  const tickSummary = summarizeTickCost(tickCost);
 
   mkdirSync(options.outDir, { recursive: true });
   writeFileSync(resolve(options.outDir, 'benchmark_results.csv'), toCsv(results));
   writeFileSync(resolve(options.outDir, 'benchmark_summary.csv'), toCsv(summary));
   writeFileSync(resolve(options.outDir, 'alert_results.csv'), toCsv(alerts));
-  if (tickCost.length > 0) {
-    writeFileSync(resolve(options.outDir, 'tick_cost.csv'), toCsv(tickCost));
-    writeFileSync(resolve(options.outDir, 'tick_cost_summary.csv'), toCsv(tickSummary));
-  }
   writeFileSync(
     resolve(options.outDir, 'run_metadata.json'),
     JSON.stringify(
@@ -547,7 +474,7 @@ export async function runBenchmarkSuite(overrides: Partial<BenchmarkOptions> = {
           arch: arch(),
           node: process.version,
         },
-        rows: { results: results.length, summary: summary.length, alerts: alerts.length, tickCost: tickCost.length },
+        rows: { results: results.length, summary: summary.length, alerts: alerts.length },
       },
       null,
       2
@@ -559,7 +486,8 @@ export async function runBenchmarkSuite(overrides: Partial<BenchmarkOptions> = {
       summary
         .filter((r) => r.movement === 8)
         .map((r) => ({
-          map: r.map,
+          source: r.source,
+          size: r.size,
           scenario: r.scenario,
           algorithm: r.heuristic === 'none' ? r.algorithm : `${r.algorithm}/${r.heuristic}`,
           'time ms': r.time_ms_mean,
@@ -570,34 +498,19 @@ export async function runBenchmarkSuite(overrides: Partial<BenchmarkOptions> = {
     );
     const alertSummary = new Map<string, number[]>();
     for (const a of alerts) {
-      const key = `${a.map}|${a.mode}${a.mode === 'coordinated' ? ` d<=${a.max_depth_limit}` : ''}`;
+      const key = `${a.size}|${a.mode}${a.mode === 'coordinated' ? ` d<=${a.max_depth_limit}` : ''}`;
       alertSummary.set(key, [...(alertSummary.get(key) ?? []), Number(a.informed_ratio)]);
     }
     console.table(
       [...alertSummary.entries()].map(([key, ratios]) => {
-        const [map, mode] = key.split('|');
-        return { map, mode, 'informed ratio mean': round(mean(ratios), 3) };
+        const [size, mode] = key.split('|');
+        return { size, mode, 'informed ratio mean': round(mean(ratios), 3) };
       })
     );
-    if (tickSummary.length > 0) {
-      console.table(
-        tickSummary
-          .filter((r) => r.algorithm === 'astar')
-          .map((r) => ({
-            map: r.map,
-            zombies: r.zombies,
-            mode: r.mode,
-            'tick ms': r.tick_ms_mean,
-            'p95 ms': r.tick_ms_p95,
-            'searches/tick': r.searches_per_tick,
-            redundant: r.redundant_rate,
-          }))
-      );
-    }
     log(`CSV written to ${options.outDir}`);
   }
 
-  return { results, summary, alerts, tickCost, tickSummary };
+  return { results, summary, alerts };
 }
 
 const isDirectExecution =

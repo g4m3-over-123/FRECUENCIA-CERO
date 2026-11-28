@@ -1,22 +1,17 @@
 import type { ExtendedWorldSnapshot } from '../core/gameplay/SimulationEngine.ts';
 
 /**
- * FPS HUD: crosshair, health, stamina, ammo, scene objective, hit marker, damage flash,
- * reload / low ammo warnings, extraction countdown and a "click to play" hint while the
- * mouse is free. Front D owns this file.
+ * Phase 0 FPS HUD: crosshair, health, stamina, ammo, scene objective, hit marker and
+ * a "click to play" hint while the mouse is free. Front D owns this file.
  */
-const LOW_HEALTH = 30;
 export class GameHud {
   private readonly root = document.createElement('div');
   private readonly fields = new Map<string, HTMLElement>();
   private hitTimer = 0;
-  private damageTimer = 0;
-  private lastHealth: number | null = null;
 
   constructor(container: HTMLElement) {
     this.root.className = 'game-hud';
     this.root.innerHTML = `
-      <div class="hud-damage" data-field="damage" aria-hidden="true"></div>
       <div class="hud-crosshair" aria-hidden="true"></div>
       <div class="hud-hitmarker" data-field="hit" aria-hidden="true"></div>
       <div class="hud-top">
@@ -24,18 +19,17 @@ export class GameHud {
         <p class="hud-objective" data-field="objective"></p>
       </div>
       <div class="hud-bottom-left">
-        <div class="hud-bar" data-field="health-row"><span>Salud</span><meter min="0" max="100" data-field="health-bar"></meter><b data-field="health"></b></div>
+        <div class="hud-bar"><span>Salud</span><meter min="0" max="100" data-field="health-bar"></meter><b data-field="health"></b></div>
         <div class="hud-bar"><span>Estamina</span><meter min="0" max="100" data-field="stamina-bar"></meter><b data-field="posture"></b></div>
       </div>
       <div class="hud-bottom-right">
-        <p class="hud-status" data-field="status" role="status"></p>
-        <p class="hud-ammo" data-field="ammo-row"><b data-field="ammo"></b><span data-field="reserve"></span></p>
+        <p class="hud-ammo"><b data-field="ammo"></b><span data-field="reserve"></span></p>
         <p class="hud-meta" data-field="tools"></p>
       </div>
       <div class="hud-lock" data-field="lock">
         <p><b>Haz clic para jugar</b></p>
         <p>WASD mover · Shift correr (ruido) · C agacharse (silencio) · Clic disparar (mucho ruido) · R recargar</p>
-        <p>Q señuelo · E barricada · F linterna · Tab Rayos X (V enfocar agente) · G cuadrícula · M panel · P pausa · Esc liberar ratón</p>
+        <p>Q señuelo · E barricada · F linterna · Tab Rayos X · G cuadrícula · M panel · Esc liberar ratón</p>
       </div>`;
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-field]')) {
       this.fields.set(el.dataset.field!, el);
@@ -54,25 +48,6 @@ export class GameHud {
     this.set('ammo', String(mara.weapon.ammoInMagazine));
     this.set('reserve', ` / ${mara.weapon.ammoReserve}`);
     this.set('tools', `Señuelos ${mara.decoysRemaining} · Barricadas ${mara.barricadesRemaining}`);
-
-    const { weapon } = mara;
-    const ammoRow = this.fields.get('ammo-row')!;
-    const low = weapon.ammoInMagazine <= Math.ceil(weapon.magazineSize / 4);
-    ammoRow.classList.toggle('reloading', weapon.reloading);
-    ammoRow.classList.toggle('low', !weapon.reloading && low);
-    this.fields.get('health-row')!.classList.toggle('critical', mara.health <= LOW_HEALTH);
-    let status = '';
-    if (weapon.reloading) status = 'Recargando...';
-    else if (weapon.ammoInMagazine === 0) status = weapon.ammoReserve > 0 ? 'Sin balas: R para recargar' : 'Sin munición';
-    else if (snapshot.extractionOpen && snapshot.extractionTicksRemaining !== null) {
-      status = `Extracción abierta: ${snapshot.extractionTicksRemaining} ticks`;
-    } else if (snapshot.paused) status = 'En pausa';
-    this.set('status', status);
-
-    if (this.lastHealth !== null && mara.health < this.lastHealth) this.damageTimer = 0.25;
-    this.lastHealth = mara.health;
-    this.damageTimer = Math.max(0, this.damageTimer - dt);
-    this.fields.get('damage')!.classList.toggle('visible', this.damageTimer > 0);
     this.fields.get('lock')!.hidden = pointerLocked || snapshot.status !== 'playing';
     this.hitTimer = Math.max(0, this.hitTimer - dt);
     this.fields.get('hit')!.classList.toggle('visible', this.hitTimer > 0);
