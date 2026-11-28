@@ -42,6 +42,7 @@ export interface AgentProfile {
   memoryDecayRate: number;
   canIntercept: boolean;
   meleeDamage: number;
+  attackCooldownTicks: number;
 }
 
 export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
@@ -52,7 +53,8 @@ export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
     activeMoveEveryTicks: 1,
     memoryDecayRate: 0.045,
     canIntercept: false,
-    meleeDamage: 12,
+    meleeDamage: 10,
+    attackCooldownTicks: 3,
   },
   pursuer: {
     visionRange: 6,
@@ -61,7 +63,8 @@ export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
     activeMoveEveryTicks: 1,
     memoryDecayRate: 0.035,
     canIntercept: true,
-    meleeDamage: 18,
+    meleeDamage: 16,
+    attackCooldownTicks: 3,
   },
   radio_survivor: {
     visionRange: 5,
@@ -71,6 +74,7 @@ export const AGENT_PROFILES: Record<AgentRole, AgentProfile> = {
     memoryDecayRate: 0.06,
     canIntercept: false,
     meleeDamage: 0,
+    attackCooldownTicks: 0,
   },
 };
 
@@ -103,6 +107,7 @@ export interface AgentRuntimeState {
   stunnedUntilTick: number;
   lastAlertBroadcastTick: number;
   lastMoveTick: number;
+  lastAttackTick: number;
 }
 
 export interface AgentCycleInput {
@@ -198,6 +203,7 @@ export function createAgentRuntime(
     stunnedUntilTick: -1,
     lastAlertBroadcastTick: -100,
     lastMoveTick: -1,
+    lastAttackTick: -100,
   };
 }
 
@@ -745,8 +751,15 @@ export class AgentBrain {
     graph: WeightedGraph
   ): GridCoord | null {
     for (let i = 1; i < path.length; i++) {
-      if (!graph.isWalkable(path[i])) {
-        return { ...path[i] };
+      const from = path[i - 1];
+      const to = path[i];
+      if (!graph.isWalkable(to)) return { ...to };
+
+      if (graph.preventCornerCutting && from.row !== to.row && from.col !== to.col) {
+        const rowSide = { row: to.row, col: from.col };
+        const colSide = { row: from.row, col: to.col };
+        if (!graph.isWalkable(rowSide)) return rowSide;
+        if (!graph.isWalkable(colSide)) return colSide;
       }
     }
     return null;

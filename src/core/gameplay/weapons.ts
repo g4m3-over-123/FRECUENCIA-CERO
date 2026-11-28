@@ -1,27 +1,35 @@
 import type { WeaponSnapshot } from '../contracts.ts';
 
 /**
- * Phase 0 weapon table. Front C (gameplay) owns balance: fire rate, reload time,
- * more weapons. Every shot is loud on purpose: shooting must attract the horde.
+ * Weapon table and ammo/reload state transitions for Front C gameplay.
+ * Every shot is loud on purpose: shooting must attract the horde.
  */
 export interface WeaponDefinition {
   id: string;
   damage: number;
   magazineSize: number;
   initialReserve: number;
+  maxReserve: number;
   /** Sound radius in cells. */
   soundRadius: number;
   soundIntensity: number;
+  /** Ticks to bring the weapon up and down again, whatever the number of rounds. */
+  reloadDurationTicks: number;
+  /** Extra ticks for each round loaded, so a full reload takes longer than a top-up. */
+  reloadTicksPerRound: number;
 }
 
 export const WEAPONS = {
   pistol: {
     id: 'pistol',
     damage: 35,
-    magazineSize: 12,
+    magazineSize: 8,
     initialReserve: 36,
-    soundRadius: 20,
+    maxReserve: 72,
+    soundRadius: 22,
     soundIntensity: 1,
+    reloadDurationTicks: 2,
+    reloadTicksPerRound: 1,
   },
 } as const satisfies Record<string, WeaponDefinition>;
 
@@ -44,13 +52,13 @@ export function createWeaponSnapshot(id: WeaponId = DEFAULT_WEAPON): WeaponSnaps
   };
 }
 
-/** Consumes one round. Returns null when the magazine is empty. */
+/** Consumes one round. Returns null when reloading or magazine is empty. */
 export function consumeRound(weapon: WeaponSnapshot): WeaponSnapshot | null {
   if (weapon.reloading || weapon.ammoInMagazine <= 0) return null;
   return { ...weapon, ammoInMagazine: weapon.ammoInMagazine - 1 };
 }
 
-/** Phase 0: instant reload. Front C can turn this into a timed reload using `reloading`. */
+/** Instant reload used by mock snapshots. */
 export function reloadWeapon(weapon: WeaponSnapshot): WeaponSnapshot {
   const missing = weapon.magazineSize - weapon.ammoInMagazine;
   const taken = Math.min(missing, weapon.ammoReserve);
@@ -59,5 +67,46 @@ export function reloadWeapon(weapon: WeaponSnapshot): WeaponSnapshot {
     ammoInMagazine: weapon.ammoInMagazine + taken,
     ammoReserve: weapon.ammoReserve - taken,
     reloading: false,
+  };
+}
+
+/**
+ * Begins a timed reload: loads rounds into the magazine immediately (keeping
+ * Phase 0 snapshot & WeaponController contracts intact) while marking `reloading: true`
+ * so `consumeRound` blocks firing until `durationTicks` elapse.
+ */
+export function startTimedReload(
+  weapon: WeaponSnapshot
+): { weapon: WeaponSnapshot; durationTicks: number; rounds: number } | null {
+  if (weapon.reloading || weapon.ammoInMagazine >= weapon.magazineSize || weapon.ammoReserve <= 0) {
+    return null;
+  }
+  const def = getWeaponDefinition(weapon.id);
+  const missing = weapon.magazineSize - weapon.ammoInMagazine;
+  const taken = Math.min(missing, weapon.ammoReserve);
+  return {
+    weapon: {
+      ...weapon,
+      ammoInMagazine: weapon.ammoInMagazine + taken,
+      ammoReserve: weapon.ammoReserve - taken,
+      reloading: true,
+    },
+    durationTicks: def.reloadDurationTicks + def.reloadTicksPerRound * taken,
+    rounds: taken,
+  };
+}
+
+/** Completes a timed reload once its duration ticks expire. */
+export function finishReload(weapon: WeaponSnapshot): WeaponSnapshot {
+  return { ...weapon, reloading: false };
+}
+
+/** Adds scavenged rounds to reserve, capped at the weapon's maxReserve. */
+export function addAmmoToReserve(weapon: WeaponSnapshot, amount: number): WeaponSnapshot {
+  const def = getWeaponDefinition(weapon.id);
+  const gain = Math.max(0, Math.floor(amount));
+  return {
+    ...weapon,
+    ammoReserve: Math.min(def.maxReserve, weapon.ammoReserve + gain),
   };
 }
