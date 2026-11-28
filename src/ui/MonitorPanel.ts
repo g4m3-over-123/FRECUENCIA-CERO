@@ -313,12 +313,26 @@ export class MonitorPanel {
 
     const video = card.video ? await this.loadClip(card.video) : undefined;
     if (this.cinematic !== overlay) return;
-    if (video) overlay.prepend(video);
+    if (video) {
+      overlay.classList.add('has-video');
+      overlay.prepend(video);
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.className = 'cinematic-skip';
+      skip.textContent = 'Saltar';
+      skip.addEventListener('click', () => this.finishCinematic?.());
+      overlay.appendChild(skip);
+    }
     document.body.appendChild(overlay);
 
     await new Promise<void>((resolve) => {
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.code === 'Escape' || event.code === 'Enter' || event.code === 'Space') done();
+      };
       const done = (): void => {
         window.clearTimeout(this.cinematicTimer);
+        window.removeEventListener('keydown', onKey);
+        video?.pause();
         if (this.finishCinematic === done) this.finishCinematic = undefined;
         if (this.cinematic === overlay) this.cinematic = undefined;
         overlay.classList.add('is-leaving');
@@ -327,10 +341,24 @@ export class MonitorPanel {
       };
       this.finishCinematic = done;
       if (video) {
+        window.addEventListener('keydown', onKey);
         video.addEventListener('ended', done, { once: true });
-        video.play().catch(() => undefined);
+        video.addEventListener('error', done, { once: true });
+        video.addEventListener(
+          'loadedmetadata',
+          () => {
+            if (!Number.isFinite(video.duration) || this.finishCinematic !== done) return;
+            window.clearTimeout(this.cinematicTimer);
+            this.cinematicTimer = window.setTimeout(done, video.duration * 1000 + 2000);
+          },
+          { once: true }
+        );
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(done);
+        });
       }
-      this.cinematicTimer = window.setTimeout(done, video ? Math.max(card.durationMs, 15_000) : card.durationMs);
+      this.cinematicTimer = window.setTimeout(done, video ? Math.max(card.durationMs, 120_000) : card.durationMs);
     });
   }
 
