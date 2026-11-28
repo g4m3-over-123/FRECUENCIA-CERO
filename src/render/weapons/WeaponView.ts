@@ -14,11 +14,14 @@ const STEP_CADENCE = { base: 1.6, perMps: .22 };
 /** Bob amplitude at walking speed, in metres; it grows with speed up to BOB_MAX_GAIN. */
 const BOB_SIDE = .0055;
 const BOB_LIFT = .0045;
-const BOB_MAX_GAIN = 1.3;
-/** Part of the Reload clip where the left hand feeds one round (its first half raises the weapon). */
-const INSERT_CLIP = { from: .53, to: 1.66 };
-/** Timing in seconds; one round per simulation tick (about 0.385 s on the street map). */
-const RELOAD_TIMING = { raise: .34, perRound: .385, lower: .34 };
+const BOB_MAX_GAIN = 1.9;
+/**
+ * Part of the Reload clip for one round: the left hand rises, pushes the shell into the tube
+ * (0.56-1.11 s) and starts back down. The clip's ends are the hand resting low, off the weapon.
+ */
+const INSERT_CLIP = { from: .3, to: 1.35 };
+/** Seconds; matches the simulation (2 ticks + 1.5 ticks per round, 0.385 s ticks on the street). */
+const RELOAD_TIMING = { raise: .38, perRound: .58, lower: .38 };
 const WALK_SPEED = 3.2;
 /** Above this ground speed the weapon is lowered and tilted as when running. */
 const SPRINT_SPEED = 4.6;
@@ -81,14 +84,14 @@ export class WeaponView {
     const lift = (Math.abs(Math.cos(this.bobPhase)) - .5) * BOB_LIFT * gain * this.bobWeight;
     const run = this.sprintWeight;
     this.root.position.set(
-      REST.x + side + run * .012,
-      REST.y + lift - run * .022,
+      REST.x + side + run * .016,
+      REST.y + lift - run * .032,
       REST.z + this.recoil * .035 + run * .01,
     );
     this.root.rotation.set(
       this.recoil * .05 - run * .06,
       run * .08,
-      -side * 2.2 + run * .1,
+      -side * 2.6 + run * .14,
     );
     this.flashTimer = Math.max(0, this.flashTimer - dt);
     this.flash.intensity = this.flashTimer > 0 ? 21 : 0;
@@ -225,7 +228,9 @@ export class WeaponView {
     action.reset().setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
     action.clampWhenFinished = !loop;
     action.setDuration(motion.seconds ?? motion.clip.duration).setEffectiveWeight(1).play();
-    if (this.current && this.current !== action) this.current.crossFadeTo(action, .045, false);
+    // Between rounds the hand travels from the weapon back down, so it needs a longer blend.
+    const fade = motion.clip.name.startsWith('Insert') ? .1 : .045;
+    if (this.current && this.current !== action) this.current.crossFadeTo(action, fade, false);
     this.current = action;
   }
 
