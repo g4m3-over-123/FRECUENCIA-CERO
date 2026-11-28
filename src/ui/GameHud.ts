@@ -18,7 +18,7 @@ export class GameHud {
   constructor(container: HTMLElement) {
     this.root.className = 'game-hud';
     const slotsMarkup = WEAPON_ORDER
-      .map((id, i) => `<span class="hud-slot" data-weapon="${id}">${i + 1} ${getWeaponDefinition(id).shortLabel}</span>`)
+      .map((id, i) => `<span class="hud-slot" data-weapon="${id}"><kbd>${i + 1}</kbd> ${getWeaponDefinition(id).shortLabel}</span>`)
       .join('');
     this.root.innerHTML = `
       <div class="hud-damage" data-field="damage" aria-hidden="true"></div>
@@ -40,9 +40,23 @@ export class GameHud {
         <p class="hud-meta" data-field="tools"></p>
       </div>
       <div class="hud-lock" data-field="lock">
-        <p><b>Haz clic para jugar</b></p>
-        <p>WASD mover · Shift correr (ruido) · C agacharse (silencio) · Clic disparar (mucho ruido) · R recargar · 1-6 / Rueda cambiar arma</p>
-        <p>Q señuelo · E barricada · F linterna · Tab Rayos X (V enfocar agente) · G cuadrícula · M panel · P pausa · Esc liberar ratón</p>
+        <p class="hud-lock-title">Haz clic en la pantalla para jugar</p>
+        <ul class="hud-lock-keys">
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Moverse</li>
+          <li><kbd>Shift</kbd> Correr (ruido)</li>
+          <li><kbd>C</kbd> Agacharse (silencio)</li>
+          <li><kbd>Clic</kbd> Disparar</li>
+          <li><kbd>R</kbd> Recargar</li>
+          <li><kbd>1-6</kbd> / <kbd>Rueda</kbd> Cambiar arma</li>
+          <li><kbd>F</kbd> Linterna</li>
+          <li><kbd>Q</kbd> Señuelo</li>
+          <li><kbd>E</kbd> Barricada</li>
+          <li><kbd>Tab</kbd> Rayos X</li>
+          <li><kbd>M</kbd> Monitor</li>
+          <li><kbd>N</kbd> Mapa grande</li>
+          <li><kbd>P</kbd> Pausa</li>
+          <li><kbd>H</kbd> Tutorial</li>
+        </ul>
       </div>`;
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-field]')) {
       this.fields.set(el.dataset.field!, el);
@@ -53,7 +67,7 @@ export class GameHud {
     container.appendChild(this.root);
   }
 
-  update(snapshot: ExtendedWorldSnapshot, pointerLocked: boolean, dt: number, objectiveOverride?: string): void {
+  update(snapshot: ExtendedWorldSnapshot, pointerLocked: boolean, dt: number, objectiveOverride?: string, suppressLock = false): void {
     const { mara } = snapshot;
     const def = getWeaponDefinition(mara.weapon.id);
     this.set('scene', `${snapshot.sceneId}. ${snapshot.sceneName}`);
@@ -90,7 +104,7 @@ export class GameHud {
     this.lastHealth = mara.health;
     this.damageTimer = Math.max(0, this.damageTimer - dt);
     this.fields.get('damage')!.classList.toggle('visible', this.damageTimer > 0);
-    this.fields.get('lock')!.hidden = pointerLocked || snapshot.status !== 'playing';
+    this.fields.get('lock')!.hidden = suppressLock || pointerLocked || snapshot.status !== 'playing';
     this.hitTimer = Math.max(0, this.hitTimer - dt);
     this.fields.get('hit')!.classList.toggle('visible', this.hitTimer > 0);
   }

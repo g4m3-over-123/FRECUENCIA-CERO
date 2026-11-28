@@ -13,6 +13,7 @@ import { PlayerController } from './render/player/PlayerController.ts';
 import { WeaponController } from './render/weapons/WeaponController.ts';
 import { WorldBuilder } from './render/world/WorldBuilder.ts';
 import { WorldStateView } from './render/world/WorldStateView.ts';
+import { GameGuide } from './ui/GameGuide.ts';
 import { GameHud } from './ui/GameHud.ts';
 import {
   MonitorPanel,
@@ -154,6 +155,7 @@ async function bootstrap(): Promise<void> {
 
   // Live Dijkstra vs A* for the monitor: one agent every few ticks, same graph and endpoints.
   const comparisons = new Map<string, MonitorSearchComparison>();
+  let lastComparison: MonitorSearchComparison | undefined;
   let compareCursor = 0;
   loop.onTick((snapshot) => {
     if (!source.compareAlgorithms || snapshot.tick % 8 !== 0) return;
@@ -165,9 +167,13 @@ async function bootstrap(): Promise<void> {
         (a.targetPosition.row !== a.position.row || a.targetPosition.col !== a.position.col)
     );
     if (candidates.length === 0) return;
-    const agent = candidates[compareCursor++ % candidates.length];
+    // Prefer long routes: short hops make Dijkstra and A* look identical.
+    const far = candidates.filter((a) => Math.abs(a.targetPosition!.row - a.position.row) + Math.abs(a.targetPosition!.col - a.position.col) >= 6);
+    const pool = far.length > 0 ? far : candidates;
+    const agent = pool[compareCursor++ % pool.length];
     const result = source.compareAlgorithms(agent.position, agent.targetPosition!);
-    comparisons.set(agent.id, { origin: agent.position, destination: agent.targetPosition!, ...result });
+    lastComparison = { origin: agent.position, destination: agent.targetPosition!, ...result };
+    comparisons.set(agent.id, lastComparison);
   });
 
   const objectiveFor = (snapshot: ExtendedWorldSnapshot): string =>
@@ -211,12 +217,48 @@ async function bootstrap(): Promise<void> {
     await panel.playCinematic(introCard(map.id, initialScene));
   };
 
-  // The intro video plays first; the game starts only once it ends or is skipped.
-  const startGame = async (): Promise<void> => {
-    await playIntro();
+  // Tutorial: shown after the intro on the first start, reopened any time with H (pauses the game).
+  let tutorialShown = autostart;
+  let resumeAfterTutorial: (() => void) | undefined;
+  const guide = new GameGuide(gameHudContainer, map, sceneManager.camera, {
+    onTutorialClosed: () => {
+      const resume = resumeAfterTutorial;
+      resumeAfterTutorial = undefined;
+      resume?.();
+    },
+  });
+  const openTutorial = (): void => {
+    if (guide.isTutorialOpen() || !loop.isRunning() || loop.latest().status !== 'playing') return;
+    const wasPaused = loop.latest().paused;
+    source.setPaused(true);
+    loop.refresh();
+    setPlaying(false);
+    sceneManager.unlockPointer();
+    resumeAfterTutorial = () => {
+      if (!wasPaused) source.setPaused(false);
+      loop.refresh();
+      setPlaying(true);
+      sceneManager.lockPointer();
+    };
+    guide.openTutorial();
+  };
+
+  const begin = (): void => {
     loop.start();
     setPlaying(true);
     sceneManager.lockPointer();
+  };
+
+  // The intro video plays first, then the tutorial; the game starts only once both are closed.
+  const startGame = async (): Promise<void> => {
+    await playIntro();
+    if (!tutorialShown) {
+      tutorialShown = true;
+      resumeAfterTutorial = begin;
+      guide.openTutorial();
+      return;
+    }
+    begin();
   };
 
   loop.onTick((snapshot) => {
@@ -274,6 +316,7 @@ async function bootstrap(): Promise<void> {
       onStart: () => void startGame(),
       onRestart: () => {
         comparisons.clear();
+        lastComparison = undefined;
         if (source instanceof SimulationEngine) source.setScene(initialScene);
         loop.reset();
         radioWasActive = loop.latest().radioActivated ?? false;
@@ -287,11 +330,17 @@ async function bootstrap(): Promise<void> {
       },
       onAlgorithmChange: (algorithm) => {
         source.setAlgorithm(algorithm, loop.latest().heuristic);
+        guide.toast(algorithm === 'astar'
+          ? 'Ahora los zombies usan A*: la heurística guía la búsqueda y expande menos nodos'
+          : 'Ahora los zombies usan Dijkstra: explora en todas direcciones hasta encontrar la ruta más barata');
         loop.refresh();
         panel.update(loop.latest(), telemetry(loop.latest()));
       },
       onCoordinationChange: (enabled) => {
         source.setCoordinationEnabled(enabled);
+        guide.toast(enabled
+          ? 'Coordinación activada: un zombie que te detecta alerta de forma recursiva a los cercanos'
+          : 'Coordinación desactivada: cada zombie actúa aislado, solo con lo que ve y oye');
         loop.refresh();
         panel.update(loop.latest(), telemetry(loop.latest()));
       },
@@ -322,6 +371,9 @@ async function bootstrap(): Promise<void> {
       case 'Tab':
         event.preventDefault();
         xray.setEnabled(!xray.isEnabled());
+        if (xray.isEnabled()) {
+          guide.toast('Rayos X: líneas = ruta calculada por cada zombie · cuadros = nodos expandidos · arcos = alertas recursivas', 'Tab V', 8000);
+        }
         panel.update(loop.latest(), telemetry(loop.latest()));
         break;
       case 'KeyG':
@@ -329,7 +381,14 @@ async function bootstrap(): Promise<void> {
         break;
       case 'KeyM':
         hudContainer.hidden = !hudContainer.hidden;
+        document.body.classList.toggle('monitor-open', !hudContainer.hidden);
         if (!hudContainer.hidden) sceneManager.unlockPointer();
+        break;
+      case 'KeyN':
+        if (panel.toggleMapExpanded()) sceneManager.unlockPointer();
+        break;
+      case 'KeyH':
+        openTutorial();
         break;
       case 'KeyQ':
         if (loop.isRunning()) loop.send({ type: 'decoy' });
@@ -344,6 +403,7 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  document.body.classList.toggle('monitor-open', !hudContainer.hidden);
   if (params.get('xray') === '1') xray.setEnabled(true);
   if (autostart) {
     panel.closeDialog();
@@ -362,7 +422,14 @@ async function bootstrap(): Promise<void> {
     xray.sync(frame);
     weapon.update(dt);
     const latest = loop.latest();
-    hud.update(latest, sceneManager.isPointerLocked(), dt, objectiveFor(latest));
+    hud.update(latest, sceneManager.isPointerLocked(), dt, objectiveFor(latest), guide.isTutorialOpen() || panel.isMapExpanded());
+    guide.update(latest, dt, {
+      running: loop.isRunning(),
+      flashlight: sceneManager.isFlashlightEnabled(),
+      xray: xray.isEnabled(),
+      leavingAct: actTransition,
+      comparison: lastComparison,
+    });
     if (frame.ticked) panel.update(frame.current, telemetry(frame.current));
     if (frame.current.status !== lastStatus) {
       lastStatus = frame.current.status;

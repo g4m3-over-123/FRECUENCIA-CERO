@@ -102,7 +102,7 @@ const states = {
 const evidence = { vision: 'Visión', sound: 'Sonido', alert: 'Alerta' };
 const logCategories = { search: 'Búsqueda', alert: 'Alerta', agent: 'Agente', gameplay: 'Partida', system: 'Sistema' };
 const cellColors: Record<CellType, string> = {
-  street: '#252d3b', sidewalk: '#4a566c', building: '#151c29', obstacle: '#9c6657',
+  street: '#252d3b', sidewalk: '#4a566c', building: '#151c29', obstacle: '#3b4150',
   barricade: '#e5ac73', pharmacy: '#80d6a5', refuge: '#f0bf76', extraction: '#f3948c',
 };
 const roleColors = { explorer: '#a3e635', pursuer: '#f87171', radio_survivor: '#60a5fa' };
@@ -127,6 +127,9 @@ export class MonitorPanel {
   private readonly agentSelect: HTMLSelectElement;
   private readonly mapSelect: HTMLSelectElement;
   private readonly mapCanvas: HTMLCanvasElement;
+  private readonly mapFrame: HTMLElement;
+  private readonly mapSlot: HTMLElement;
+  private readonly mapOverlay = document.createElement('div');
   private readonly health: HTMLProgressElement;
   private readonly logList: HTMLUListElement;
   private readonly logEmpty: HTMLElement;
@@ -178,16 +181,35 @@ export class MonitorPanel {
         </section>
 
         <section class="monitor-section" aria-labelledby="monitor-map-title">
-          <div class="monitor-section-title"><h2 id="monitor-map-title">Mapa táctico</h2><span class="monitor-meta" data-field="map-size">—</span></div>
+          <div class="monitor-section-title"><h2 id="monitor-map-title">Mapa táctico</h2><span class="monitor-meta" data-field="map-size">—</span><button type="button" class="monitor-small" data-control="map-expand">Ampliar (N)</button></div>
           <label class="monitor-sr-only" for="monitor-map">Sector del mapa</label>
           <select id="monitor-map">
             ${Object.entries(maps).map(([id, label]) => `<option value="${id}"${id === 'map_street' ? ' selected' : ''}>${label}</option>`).join('')}
           </select>
-          <div class="monitor-map-frame"><canvas class="monitor-map" width="250" height="250" role="img" aria-label="Mapa cenital del sector"></canvas></div>
+          <div class="monitor-map-frame">
+            <div class="monitor-map-head">
+              <p><b>Mapa táctico</b> · <span data-field="big-algo">—</span></p>
+              <div class="monitor-map-nav">
+                <button type="button" data-control="agent-prev">Agente anterior</button>
+                <span data-field="big-agent">—</span>
+                <button type="button" data-control="agent-next">Agente siguiente</button>
+                <button type="button" data-control="map-close">Cerrar (N)</button>
+              </div>
+            </div>
+            <canvas class="monitor-map" width="250" height="250" role="img" aria-label="Mapa cenital del sector"></canvas>
+            <div class="monitor-map-foot">
+              <ul class="monitor-legend">
+                <li class="spawn">Mara</li><li class="explorer">Explorador</li><li class="pursuer">Perseguidor</li><li class="barricade">Barricada</li>
+                <li class="dijkstra-nodes">Nodos expandidos por Dijkstra</li><li class="astar-nodes">Nodos expandidos por A*</li><li class="path-line">Ruta del agente</li>
+              </ul>
+              <p data-field="big-stats">Selecciona un agente que esté calculando una ruta.</p>
+            </div>
+          </div>
           <p class="monitor-meta" data-field="map-status" role="status">Cargando mapa…</p>
           <ul class="monitor-legend" aria-label="Leyenda del mapa">
             <li class="spawn">Mara</li><li class="pharmacy">Farmacia</li><li class="refuge">Refugio</li><li class="extraction">Extracción</li>
             <li class="explorer">Explorador</li><li class="pursuer">Perseguidor</li><li class="barricade">Barricada</li>
+            <li class="dijkstra-nodes">Nodos Dijkstra</li><li class="astar-nodes">Nodos A*</li>
           </ul>
         </section>
 
@@ -267,6 +289,12 @@ export class MonitorPanel {
     this.agentSelect = this.element('#monitor-agent');
     this.mapSelect = this.element('#monitor-map');
     this.mapCanvas = this.element('.monitor-map');
+    this.mapFrame = this.element('.monitor-map-frame');
+    this.mapSlot = this.mapFrame.parentElement!;
+    this.mapOverlay.className = 'monitor-map-overlay';
+    this.mapOverlay.hidden = true;
+    this.mapOverlay.addEventListener('click', (event) => { if (event.target === this.mapOverlay) this.toggleMapExpanded(false); });
+    document.body.appendChild(this.mapOverlay);
     this.health = this.element('#monitor-health');
     this.logList = this.element('.monitor-log');
     this.logEmpty = this.element('[data-field="log-empty"]');
@@ -288,6 +316,37 @@ export class MonitorPanel {
   showMap(id: MonitorMapId): void {
     this.mapSelect.value = id;
     void this.selectMap(id, false);
+  }
+
+  /** Large tactical map overlay (N): all agent routes and Dijkstra vs A* expanded nodes. */
+  toggleMapExpanded(force?: boolean): boolean {
+    const expand = force ?? this.mapOverlay.hidden;
+    if (expand) {
+      this.mapOverlay.appendChild(this.mapFrame);
+      const withData = this.snapshot?.agents.find((a) => a.state !== 'dead' && this.telemetry.agents?.[a.id]?.comparison);
+      if (withData) this.agentSelect.value = withData.id;
+      else if (!this.telemetry.agents?.[this.agentSelect.value]?.comparison) this.cycleAgent(1);
+      this.updateInspector();
+    } else {
+      this.mapSlot.insertBefore(this.mapFrame, this.mapSlot.querySelector('[data-field="map-status"]'));
+    }
+    this.mapOverlay.hidden = !expand;
+    this.mapFrame.classList.toggle('is-expanded', expand);
+    if (this.snapshot) this.drawLive(this.snapshot);
+    return expand;
+  }
+
+  isMapExpanded(): boolean {
+    return !this.mapOverlay.hidden;
+  }
+
+  private cycleAgent(delta: number): void {
+    const ids = (this.snapshot?.agents ?? []).filter((a) => a.state !== 'dead' && a.role !== 'radio_survivor').map((a) => a.id);
+    if (ids.length === 0) return;
+    const index = ids.indexOf(this.agentSelect.value);
+    this.agentSelect.value = ids[(index + delta + ids.length) % ids.length];
+    this.updateInspector();
+    if (this.snapshot) this.drawLive(this.snapshot);
   }
 
   /** Closes the start/end dialog programmatically (e.g. ?autostart=1). */
@@ -436,6 +495,10 @@ export class MonitorPanel {
     connect(this.button('act1'), callbacks.onActJump && (() => callbacks.onActJump?.('act1')));
     connect(this.button('act2'), callbacks.onActJump && (() => callbacks.onActJump?.('act2')));
 
+    this.button('map-expand').addEventListener('click', () => this.toggleMapExpanded(true));
+    this.button('map-close').addEventListener('click', () => this.toggleMapExpanded(false));
+    this.button('agent-prev').addEventListener('click', () => this.cycleAgent(-1));
+    this.button('agent-next').addEventListener('click', () => this.cycleAgent(1));
     this.collapse.addEventListener('click', () => {
       this.panels.hidden = !this.panels.hidden;
       this.collapse.textContent = this.panels.hidden ? 'Abrir' : 'Plegar';
@@ -548,9 +611,31 @@ export class MonitorPanel {
     for (const b of barricades) if (inside(b)) context.fillRect(b.col * CELL_PX, b.row * CELL_PX, CELL_PX - 0.5, CELL_PX - 0.5);
 
     const selected = snapshot.agents.find(({ id }) => id === this.agentSelect.value) as (AgentSnapshot & LiveAgentExtras) | undefined;
+    const comparison = selected ? this.telemetry.agents?.[selected.id]?.comparison : undefined;
+    if (comparison) {
+      context.fillStyle = 'rgba(251, 146, 60, .42)';
+      for (const p of comparison.dijkstra.expandedNodes) if (inside(p)) context.fillRect(p.col * CELL_PX, p.row * CELL_PX, CELL_PX - 0.5, CELL_PX - 0.5);
+      context.fillStyle = 'rgba(56, 189, 248, .75)';
+      for (const p of comparison.astar.expandedNodes) if (inside(p)) context.fillRect(p.col * CELL_PX + 2, p.row * CELL_PX + 2, CELL_PX - 4, CELL_PX - 4);
+    }
+    context.globalAlpha = 0.45;
+    context.lineWidth = 1.5;
+    for (const agent of snapshot.agents as (AgentSnapshot & LiveAgentExtras)[]) {
+      if (agent === selected || agent.state === 'dead' || !agent.currentPath || agent.currentPath.length < 2) continue;
+      context.strokeStyle = roleColors[agent.role];
+      context.beginPath();
+      agent.currentPath.forEach((p, i) => {
+        const x = p.col * CELL_PX + CELL_PX / 2;
+        const y = p.row * CELL_PX + CELL_PX / 2;
+        if (i === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    }
+    context.globalAlpha = 1;
     if (selected?.currentPath && selected.currentPath.length > 1 && selected.state !== 'dead') {
-      context.strokeStyle = roleColors[selected.role];
-      context.lineWidth = 2;
+      context.strokeStyle = '#ffffff';
+      context.lineWidth = 3;
       context.beginPath();
       selected.currentPath.forEach((p, i) => {
         const x = p.col * CELL_PX + CELL_PX / 2;
@@ -616,6 +701,15 @@ export class MonitorPanel {
       : undefined);
     const comparison = data?.comparison;
     this.set('comparison', comparison ? `${coordinate(comparison.origin)} → ${coordinate(comparison.destination)}` : 'Sin búsquedas comparables.');
+    this.set('big-agent', agent ? `${roles[agent.role]} · ${agent.id} · ${states[agent.state]}` : 'Sin agente');
+    this.set('big-algo', this.snapshot ? (this.snapshot.algorithm === 'astar' ? `Algoritmo activo: A* (${this.snapshot.heuristic})` : 'Algoritmo activo: Dijkstra') : '—');
+    if (comparison) {
+      const { dijkstra: d, astar: a } = comparison;
+      const saved = d.expandedCount > 0 ? Math.round((1 - a.expandedCount / d.expandedCount) * 100) : 0;
+      this.set('big-stats', `Ruta ${coordinate(comparison.origin)} → ${coordinate(comparison.destination)} · Dijkstra: costo ${this.searchCost(d)}, ${d.expandedCount} nodos, ${numberFormat.format(d.executionTimeMs)} ms · A*: costo ${this.searchCost(a)}, ${a.expandedCount} nodos, ${numberFormat.format(a.executionTimeMs)} ms · A* expande ${saved}% menos nodos con el mismo costo óptimo.`);
+    } else {
+      this.set('big-stats', agent ? 'Este agente aún no tiene una comparación: espera unos segundos o elige otro.' : 'Selecciona un agente que esté calculando una ruta.');
+    }
     this.setSearchRow('dijkstra', comparison?.dijkstra);
     this.setSearchRow('astar', comparison?.astar);
   }
