@@ -18,7 +18,7 @@ const EYE_HEIGHT_CROUCHING = 1.05;
 const CROUCH_SMOOTH_SPEED = 10;
 const PREVIEW_WALK_SPEED = 3.8;
 const PREVIEW_CROUCH_SPEED = 2.0;
-const DEFAULT_STREET_ASSET_URL = '/assets/props/street.glb';
+const DEFAULT_STREET_ASSET_URL = `${import.meta.env.BASE_URL}assets/props/street_enhanced.glb`;
 
 function createNightEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
   const environment = new THREE.Scene();
@@ -116,7 +116,7 @@ function createRain() {
 
 export interface SceneManagerOptions {
   /**
-   * Loads street.glb centered on the origin for a standalone preview (default true).
+   * Loads street_enhanced.glb centered on the origin for a standalone preview (default true).
    * The game passes false: WorldBuilder places the asset aligned with the map grid.
    */
   autoloadStreetPreview?: boolean;
